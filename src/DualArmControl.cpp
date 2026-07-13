@@ -134,21 +134,16 @@ void DualArmControl::stateIndependent(){
 void DualArmControl::ImpactAware(){
        // Documentation and theory on ImpactAware.md
        // Step 1 Decrease Impedance stiffness to better absorb the impact 
-              gains.massImpactGains  = Eigen::Vector6d::Constant(1);                           
-              gains.springImpactGains << 10.0,10.0,10.0,20.0,20.0,20.0;       
-              gains.damperImpactGains =  1.5*2.0 * gains.springGains.cwiseProduct(gains.springGains).cwiseSqrt(); 
-              leftImpedanceTask_ ->gains().spring().vec(gains.springImpactGains);
-              leftImpedanceTask_ ->gains().damper().vec(gains.damperImpactGains);
-              rightImpedanceTask_->gains().spring().vec(gains.springImpactGains);
-              rightImpedanceTask_->gains().damper().vec(gains.damperImpactGains);
+              Eigen::Matrix<double, 6, 1> KImpactGains { 10.0, 10.0, 10.0, 20.0, 20.0, 20.0 };
+              gains.wrenchGains.setZero();
+              setImpedanceGains(KImpactGains, KImpactGains, gains.wrenchGains, 2.5);
+
        // Step 2 Contact Velocity Limitation, the threshold activates after impact
-              Eigen::MatrixXd dof = Eigen::MatrixXd::Identity(6,6);
               Eigen::VectorXd spd = Eigen::VectorXd::Zero(6);
               spd(5) = 0.01;
-              speedLeftConstr_->addBoundedSpeed(solver(),eeName_,Eigen::Vector3d::Zero(),dof,-spd,spd); 
-              speedRightConstr_->addBoundedSpeed(solver(),eeName_,Eigen::Vector3d::Zero(),dof,-spd,spd); 
-              solver().addConstraintSet(speedLeftConstr_);
-              solver().addConstraintSet(speedRightConstr_);
+              auto [speedLeftConstr, speedRightConstr] = createBoundedSpeed(spd);
+              solver().addConstraintSet(speedLeftConstr);
+              solver().addConstraintSet(speedRightConstr);
        // Step 3 Stable Contact Criterion
               /*Attualmente il blocco della posa (leftImpedanceTask_->targetPose(...)) scatta al primo superamento della soglia di forza — che può ancora cadere dentro il transitorio d'urto, non a contatto assestato.*/
 
@@ -239,29 +234,14 @@ mc_rtc::log::info(
               // Nota tecnica: Il braccio sinistro viene impostato più morbido (spring = 50.0) 
               // per agire da "inseguitore/ammortizzatore" durante la traslazione laterale, 
               // mentre il braccio destro è più rigido (spring = 150.0) per fare da guida principale. 
-                     Eigen::Vector6d springGainsRight;
-                     Eigen::Vector6d springGainsLeft;
-                     Eigen::Vector6d damperGainsRight;
-                     Eigen::Vector6d damperGainsLeft;
-              // Configurazione della Rigidezza Virtuale (Spring K) per i due bracci
-                     springGainsRight     << 10.0, 10.0, 10.0, 150.0, 150.0, 150.0;
-                     springGainsLeft      << 10.0, 10.0, 10.0, 50.0, 50.0, 50.0;
-              // Calcolo dello smorzamento critico (D = 2 * sqrt(M * K)) per evitare oscillazioni
-                     damperGainsRight =  2.0 * springGainsRight.cwiseProduct(springGainsRight).cwiseSqrt(); 
-                     damperGainsLeft =  2.0 * springGainsLeft.cwiseProduct(springGainsLeft).cwiseSqrt(); 
-              // Abilitazione del guadagno sul Wrench (Kf) sull'asse Z locale (ultimo elemento)
+                     Eigen::Matrix<double, 6, 1> springGainsRight { 10.0, 10.0, 10.0, 150.0, 150.0, 150.0 };
+                     Eigen::Matrix<double, 6, 1> springGainsLeft { 10.0, 10.0, 10.0, 50.0, 50.0, 50.0 };
+
                      double rampa = std::min(1.0, stateTimer_ / 2.5);
                      double wrenchGainAttuale = 2.0 * rampa;
                      gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  wrenchGainAttuale;
-              // Invio dei parametri ai rispettivi task di impedenza mc_rtc
-                     rightImpedanceTask_->gains().wrench().vec(gains.wrenchGains);
-                     leftImpedanceTask_->gains().wrench().vec(gains.wrenchGains);
                      
-                     leftImpedanceTask_->gains().spring().vec(springGainsLeft);
-                     leftImpedanceTask_->gains().damper().vec(damperGainsLeft);
-
-                     rightImpedanceTask_->gains().spring().vec(springGainsRight);
-                     rightImpedanceTask_->gains().damper().vec(damperGainsRight);
+                     setImpedanceGains(K_left, K_right, gains.wrenchGains, 1);
               // =========================================================================
               // 2. AGGIORNAMENTO FORZE E LOGICA DI CONTROLLO "HOLD"
               // =========================================================================

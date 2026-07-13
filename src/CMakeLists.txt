@@ -5,6 +5,7 @@ set(controller_SRC
   DualArmControlTrajectory.cpp
   DualArmControlGrasp.cpp
   DualArmControlLogging.cpp
+  DualArmControlImpact.cpp
   
 )
 

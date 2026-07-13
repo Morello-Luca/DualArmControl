@@ -312,9 +312,12 @@ sva::ForceVecd cmdRight{
 
 
 // constraints
-std::unique_ptr<mc_solver::BoundedSpeedConstr> speedLeftConstr_;
-std::unique_ptr<mc_solver::BoundedSpeedConstr> speedRightConstr_;
+void boundSpeed(const Eigen::VectorXd & spd);
 
+void setImpedanceGains(const Eigen::Vector6d & springLeft, 
+                         const Eigen::Vector6d & springRight, 
+                         const Eigen::Vector6d & wrenchGains,
+                        double dampingRatio = 1.0);
 
 
 };

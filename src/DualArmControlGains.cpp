@@ -37,4 +37,28 @@ void DualArmControl::configureGains(){
        // OBJECT TRAJECTORY TIME
        // ========================================================================= 
        gains.totalTrajectoryDuration_ = 5.0;
+
+
+}
+
+
+
+void DualArmControl::setImpedanceGains(const Eigen::Vector6d & springLeft, 
+                                       const Eigen::Vector6d & springRight, 
+                                       const Eigen::Vector6d & wrenchGains,
+                                       double dampingRatio) 
+{
+    // Calcolo automatico e CORRETTO dello smorzamento critico (D = 2 * sqrt(K))
+    Eigen::Vector6d damperLeft  = 2.0 * dampingRatio * springLeft.cwiseSqrt();
+    Eigen::Vector6d damperRight = 2.0 * dampingRatio * springRight.cwiseSqrt();
+
+    // Assegnazione al braccio sinistro
+    leftImpedanceTask_->gains().spring().vec(springLeft);
+    leftImpedanceTask_->gains().damper().vec(damperLeft);
+    leftImpedanceTask_->gains().wrench().vec(wrenchGains);
+
+    // Assegnazione al braccio destro
+    rightImpedanceTask_->gains().spring().vec(springRight);
+    rightImpedanceTask_->gains().damper().vec(damperRight);
+    rightImpedanceTask_->gains().wrench().vec(wrenchGains);
 }
