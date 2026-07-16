@@ -6,9 +6,9 @@ void DualArmControl::configureGains(){
        // ========================================================================= 
        gains.massGains = Eigen::Vector6d::Constant(1);                           
        gains.springGains << 10.0, 10.0, 10.0, 100.0, 100.0, 100.0;       
-       gains.damperGains =  2.0 * gains.springGains.cwiseProduct(gains.springGains).cwiseSqrt(); 
+       gains.damperGains =  2.0 * gains.springGains.cwiseProduct(gains.massGains).cwiseSqrt(); 
        gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  1.0;   
-       gains.cutoffPeriod = 0.8;
+       gains.cutoffPeriod = 0.9;
        forBothImpedanceTasks([&](auto &task){
               task->gains().mass().vec(gains.massGains);
               task->gains().spring().vec(gains.springGains);
@@ -27,7 +27,7 @@ void DualArmControl::configureGains(){
        // =========================================================================
        // DESORED INTERNAL FORCE 
        // =========================================================================      
-       gains.lambda_desired = 15;       
+       gains.lambda_desired = 0;       
        // =========================================================================
        // PRE CONTACT IMPACT SIGMOID GAINS
        // ========================================================================= 
@@ -49,8 +49,8 @@ void DualArmControl::setImpedanceGains(const Eigen::Vector6d & springLeft,
                                        double dampingRatio) 
 {
     // Calcolo automatico e CORRETTO dello smorzamento critico (D = 2 * sqrt(K))
-    Eigen::Vector6d damperLeft  = 2.0 * dampingRatio * springLeft.cwiseSqrt();
-    Eigen::Vector6d damperRight = 2.0 * dampingRatio * springRight.cwiseSqrt();
+    Eigen::Vector6d damperLeft  = 2.0 * dampingRatio * springLeft.cwiseProduct(gains.massGains).cwiseSqrt();
+    Eigen::Vector6d damperRight = 2.0 * dampingRatio * springRight.cwiseProduct(gains.massGains).cwiseSqrt();
 
     // Assegnazione al braccio sinistro
     leftImpedanceTask_->gains().spring().vec(springLeft);
@@ -61,4 +61,19 @@ void DualArmControl::setImpedanceGains(const Eigen::Vector6d & springLeft,
     rightImpedanceTask_->gains().spring().vec(springRight);
     rightImpedanceTask_->gains().damper().vec(damperRight);
     rightImpedanceTask_->gains().wrench().vec(wrenchGains);
+}
+
+double DualArmControl::smoothGain(double t,
+                                  double Kmin,
+                                  double Kmax,
+                                  double t_conv)
+{
+    
+    constexpr double a = 3.0;   // sposta la tanh verso destra
+    double tau = t_conv / (2.0 * a);
+
+    double s = (std::tanh(t / tau - a) + std::tanh(a)) /
+               (1.0 + std::tanh(a));
+
+    return Kmin + (Kmax - Kmin) * s;
 }

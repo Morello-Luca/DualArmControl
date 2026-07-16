@@ -24,10 +24,14 @@ void DualArmControl::registerCollaborativeLogs(){
               // FORCE CONTROL
               // =========================================================================
               addLog("InternalForce_Desired", gains.lambda_desired);
-              addLog("InternalForce_Measured", lambdaFiltered_lowpass_cut);
+              addLog("InternalForce_Measured", meas);
               addLog("InternalForce_Error", error_internalForce);
+              addLog("InternalForce_lambdaCommand", lambdaCommand_);
               addLog("ContactForce_Reference_Left", cmdLeft);
               addLog("ContactForce_Reference_Right", cmdRight);
+                     
+              addLog("InternalForce_DemandForce", demandforce);
+              
 
               // =========================================================================
               // TRAJECTORY ENDEFFECTORS
@@ -45,4 +49,5 @@ void DualArmControl::registerCollaborativeLogs(){
               logger().addLogEntry("ObjectTrajectory_Real",[this](){return Eigen::Vector3d(
                      0.5 * (robots().robot(leftRobotIndex_).bodyPosW(eeName_).translation() +
                             robots().robot(rightRobotIndex_).bodyPosW(eeName_).translation()));});
+              //addLog("IfInactive", !(gains.lambda_desired - lambdaMeasured_ < 2));
 }

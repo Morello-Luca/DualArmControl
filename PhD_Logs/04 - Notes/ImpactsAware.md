@@ -197,3 +197,71 @@ Il punto centrale che emerge dallo stato dell'arte è che il rilevamento a sogli
 - Heck, D., Kostić, D., Denasi, A., et al. *Internal and external force-based impedance control for cooperative manipulation.*
 
 *Nota: i riferimenti sopra elencati sono stati reperiti su Google Scholar / arXiv al momento della stesura di questo documento (luglio 2026). Si raccomanda di consultare le versioni integrali per i dettagli implementativi (formulazione esatta dei vincoli QP, guadagni di impedenza, parametri sperimentali).*
+
+
+
+
+
+
+# 15-07-2026
+la mia idea e di fare un impatto a velocita diversa da 0, che dissipa tutta la forza, ora se alzo parametri i robot "rimbalzano" come un urto elastico, voglio completamente anelastico, indipendentemente dalla velocita. mi immaggino dipo convey packges that we do not know the velocity, 
+in this scenario will we have stationary packages so i limited the velocity
+
+## Perché rimbalza
+Il tuo schema attuale (ramp di forza in targetWrench → freeze della pose quando la soglia scatta) è, dal punto di vista dinamico, un contatto a molla: quando targetPose viene bloccata sulla posa corrente, ma l'end-effector ha ancora velocità residua non nulla in quell'istante, il task di impedenza la interpreta come un errore di posizione e reagisce con una forza di richiamo proporzionale a K. Se K è alto, quella forza di richiamo rispedisce indietro l'end-effector — è esattamente un urto elastico (coefficiente di restituzione e>0), non per via del sensore ma per via del comportamento a molla del controllore stesso. È lo stesso fenomeno descritto da Hogan e più tardi formalizzato da Colgate & Hogan in termini di stabilità/passività del contatto: rigidezza alta = comportamento vicino all'elastico, indipendentemente dal fatto che tu lo voglia o no.
+
+## La soluzione più diretta: rapporto smorzamento/rigidezza, non solo K
+Volpe e Khosla, in un lavoro specificamente dedicato a questo problema (A theoretical and experimental investigation of impact control for manipulators), mostrano che un contatto rigido-su-rigido senza rimbalzo si ottiene non abbassando la rigidezza in sé, ma agendo sul rapporto tra massa/inerzia apparente del controllore e quella dell'ambiente: con guadagni di forza proporzionali negativi, o un rapporto di massa impedenza-ambiente minore di 1, si ottiene un impatto stabile senza rimbalzo. Tradotto nel tuo codice: il problema non è "che K uso", ma il fatto che stai usando D = 2*sqrt(K) (smorzamento critico) — che dà una risposta oscillante-al-limite in teoria, ma basta un minimo errore di modello o ritardo del loop reale perché scivoli in sotto-smorzato → rimbalzo. Prova a sovrasmorzare deliberatamente nel momento del freeze:
+
+## Se vuoi davvero "e = 0" garantito, indipendentemente dalla velocità residua
+
+Qui entra in gioco un'idea diversa dalla tua pipeline attuale, mutuata dal reference spreading di van Steen: invece di lasciare che il coefficiente di restituzione emerga (bene o male) dai guadagni K/D, lo imponi esplicitamente nel riferimento. Quando il contatto viene rilevato, invece di congelare la posa corrente dell'end-effector (che può includere un piccolo overshoot), costruisci il riferimento post-contatto assumendo v_post = 0 per costruzione — cioè il target diventa "resta fermo alla posizione di primo contatto", e lasci che sia il controllore (con D sovrasmorzato) a portarcelo senza oscillare, invece di dargli un target che "vibra" se il freeze avviene qualche ciclo in ritardo rispetto al vero istante di contatto. È una differenza sottile ma è esattamente il punto del framework: non stai più sperando che i guadagni si comportino bene, stai dicendo esplicitamente al controllore "questo è un urto plastico" a livello di riferimento, non di tuning.
+
+## Riferimenti aggiuntivi rilevanti
+
+- Volpe, R., Khosla, P. (1993). A theoretical and experimental investigation of impact control for manipulators. The International Journal of Robotics Research, 12(4), 351–365.
+- Colgate, J. E., Hogan, N. (1989). An analysis of contact instability in terms of passive physical equivalents. IEEE ICRA.
+- Lange, F., Hirzinger, G. (o simile). Impact modeling and control for industrial manipulators — studio sperimentale su superficie rigida (granito) che mostra contatto senza rimbalzo tramite controllo integrale nella fase di transizione.
+
+## e $ \leq $ 0
+Se ζ = D/(2√(MK)) ≥ 1 (aperiodico/overdamped), questa risposta non oscilla mai: x cresce, raggiunge un massimo (penetrazione massima), poi decade monotonicamente a zero senza mai invertire di segno la velocità oltre l'istante iniziale. Questo è, matematicamente, e = 0 (o e<0 se strapotenzi lo smorzamento) per costruzione del modello, non per tuning empirico — è esattamente la condizione che stavi cercando.
+
+## Il ruolo del mass ratio (Volpe & Khosla)
+Qui entra il secondo pezzo, quello che avevi chiesto: il risultato di Volpe & Khosla dice che un rapporto massa virtuale/inerzia riflessa del braccio minore di 1 dà una risposta di impatto senza rimbalzo anche a fronte di incertezze di modello — è la condizione di robustezza in più rispetto al solo ζ≥1 su un modello ideale. Concretamente:
+
+// Rapporto massa target vs inerzia riflessa del braccio: < 1 = "leggero", reagisce prima che accumuli energia
+gains.massImpactGains << 0.3, 0.3, 0.3, 0.3, 0.3, 0.3; // invece di Constant(1)
+
+
+
+# inerzia riflessa
+In robotica e meccatronica, l'inerzia riflessa ($m_{\text{refl}}$ o $I_{\text{refl}}$) è l'inerzia equivalente che l'ambiente (o un osservatore esterno) "percepisce" quando spinge o interagisce con l'organo terminale (end-effector) del robot.
+Essa non dipende solo dalla massa fisica dei link, ma è fortemente influenzata dai rapporti di riduzione dei motori.Se consideriamo un singolo giunto con un motore di inerzia rotorica $I_m$ collegato a un riduttore con rapporto di riduzione $N$ (dove $N > 1$, ad esempio $100:1$):
+
+## L'Analogia Intuitiva: Il Cambio dell'Auto
+Immagina di spingere a mano un'automobile spenta in folle. L'auto si muove (faticosamente), perché stai opponendo forza solo alla sua massa reale.
+Ora immagina di fare la stessa cosa, ma con l'auto che ha la prima marcia inserita.
+Se provi a spingerla, l'auto ti sembrerà pesante come un palazzo, quasi impossibile da muovere.
+
+- La massa fisica dell'auto è rimasta esattamente la stessa di prima.
+
+- Cos'è cambiato? Per far fare un millimetro alle ruote dell'auto, il motore (tramite la marcia corta) deve compiere tantissimi giri velocemente. Tu, da fuori, non stai solo accelerando la massa dell'auto, ma stai costringendo il motore a girare vorticosamente.
+
+L'inerzia del motore, "moltiplicata" dal cambio e proiettata sulle ruote, è l'inerzia riflessa. Dall'esterno, la percepisci come un muro di mattoni.
+
+## Come si calcola (Il concetto matematico)
+
+Nei robot, i motori elettrici girano molto velocemente ma hanno poca coppia, quindi si usano quasi sempre dei riduttori di velocità (es. Harmonic Drive, riduttori epicicloidali) con un rapporto di riduzione $N$ (es. $N = 100$).L'inerzia totale che "sente" l'ambiente quando urta l'estremità del robot è data da:
+
+$$m_{\text{riflessa}} = m_{\text{link}} + N^2 \cdot m_{\text{motore}}$$
+
+Nota il quadrato ($N^2$): Se il motore ha un'inerzia minuscola (es. $0.001 \text{ kg}\cdot\text{m}^2$) ma il riduttore è $100:1$, l'inerzia del motore riflessa sul giunto diventa $100^2 \times 0.001 = 10 \text{ kg}\cdot\text{m}^2$. L'effetto del motore è amplificato di 10.000 volte!
+
+## Come la "capisce" il robot durante un impatto?
+Perché Volpe e Khosla insistono tanto su questo punto? Perché l'inerzia riflessa divide il comportamento del robot in due fasi temporali distinte quando tocca una superficie:
+### Fase 1: L'Impatto Puro (I primi millisecondi)
+Quando l'end-effector urta un oggetto, la corrente nei motori non cambia istantaneamente (c'è il ritardo del computer, dei sensori e dell'induttanza dei motori). Per i primi millisecondi, il robot è un "pezzo di ferro passivo".
+In questo istante, l'ambiente vede solo l'inerzia riflessa. Se questa è altissima (a causa di riduttori elevati), l'impatto genererà una forza enorme (una martellata), che farà rimbalzare indietro il robot prima ancora che il software possa rendersene conto.
+### Fase 2: La Risposta del Controllo (Dopo l'impatto)
+Solo dopo qualche millisecondo il computer legge il sensore di forza e dice al motore di alleggerirsi. Qui entra in gioco la massa virtuale ($m_{\text{virtuale}}$).Ecco perché, come dicevi prima, se tu imposti una massa virtuale più piccola dell'inerzia riflessa ($m_{\text{virtuale}} < m_{\text{riflessa}}$), stai dicendo al controllore di essere estremamente "morbido" e reattivo per compensare quella tremenda "martellata" passiva iniziale dovuta all'inerzia riflessa, evitando il rimbalzo.
+

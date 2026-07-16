@@ -5,6 +5,9 @@
 #include <mc_tasks/PostureTask.h>
 #include <mc_tasks/ImpedanceTask.h>
 #include <mc_solver/BoundedSpeedConstr.h>
+#include <RBDyn/FD.h>
+#include <Tasks/QPSolver.h>
+
 
 
 struct GraspFrame
@@ -26,16 +29,17 @@ enum class FSMState : int
 };
 
 enum class CollabSubState {
-        APPROACH_RAMP,
         BUILD_GRASP,
+        APPROACH_RAMP,
+        TRAJECTORY,
         COOPERATIVE_MOTION
     };
 
 
 struct ImpactGains{
     double k = 2.0;
-    double t0 = 7.0;
-    double maxForce = -5.5;
+    double t0 = 4.0;
+    double maxForce = -9.0;
     double alpha(double stateTimer) const{
         return 1.0 / (1.0 + std::exp(-k * (stateTimer - t0)));
     }
@@ -142,6 +146,7 @@ private:
   void entryStateImpact();
   void stateImpact();
 
+
   void entryStateCollaborative();
   void stateCollaborative();
 
@@ -157,7 +162,7 @@ private:
 
   void configureGains();
 
-
+ void currentInternalForce();
 
   void filtering();
   sva::PTransformd computeDesiredObjectPose();
@@ -310,14 +315,48 @@ sva::ForceVecd cmdRight{
 };
 
 
-
+std::unique_ptr<mc_solver::BoundedSpeedConstr> speedLeftConstr_;
+std::unique_ptr<mc_solver::BoundedSpeedConstr> speedRightConstr_;
 // constraints
-void boundSpeed(const Eigen::VectorXd & spd);
+std::pair<
+    std::unique_ptr<mc_solver::BoundedSpeedConstr>,
+    std::unique_ptr<mc_solver::BoundedSpeedConstr>
+> boundSpeed(const Eigen::VectorXd & spd);
 
 void setImpedanceGains(const Eigen::Vector6d & springLeft, 
                          const Eigen::Vector6d & springRight, 
                          const Eigen::Vector6d & wrenchGains,
                         double dampingRatio = 1.0);
 
+
+Eigen::MatrixXd dof = Eigen::MatrixXd::Identity(6,6);
+
+double smoothGain(double t, double Kmin, double Kmax, double t_conv);
+
+
+
+double rampTime;
+double lambdaStart;
+
+
+double computeReflectedMassZ(unsigned int robotIndex,
+                             const std::string & eeName);
+
+
+double meas;
+Eigen::Matrix<double, 12, 1> n_s;
+Eigen::Matrix<double, 12, 1> n_squeeze;
+
+
+double t_norm = 0;
+
+Eigen::VectorXd spd = Eigen::VectorXd::Zero(6);
+
+
+//==================================
+// optimal control loop
+
+double DemandForces(double K) const;
+double demandforce=0;
 
 };

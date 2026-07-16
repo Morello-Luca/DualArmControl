@@ -1,7 +1,7 @@
 #include "DualArmControl.h"
 
 sva::PTransformd DualArmControl::computeDesiredObjectPose(){
-       double t_norm = std::min(1.0, gains.collaborativeTime_ / gains.totalTrajectoryDuration_);
+       t_norm = std::min(1.0, gains.collaborativeTime_ / gains.totalTrajectoryDuration_);
        if (t_norm >= 1.0) {return x_0_objectWaypoint1_;}
        // Smooth quintic profile
               const double t2 = t_norm * t_norm;
@@ -18,3 +18,5 @@ sva::PTransformd DualArmControl::computeDesiredObjectPose(){
               desiredPose.rotation() = q_start.slerp(s, q_target).toRotationMatrix();
        return desiredPose;
 }
+
+
