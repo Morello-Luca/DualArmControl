@@ -257,7 +257,7 @@ void DualArmControl::stateCollaborative(){
                      
                      gains.lambda_desired = lambdaStart + (30.0 - lambdaStart) * s;
                      stateTimer_ += timeStep;
-                     gains.springGains << 10.0, 10.0, 10.0, 30.0, 30.0, 4.0;
+                     gains.springGains << 10.0, 10.0, 10.0, 30.0, 30.0, 15.0;
                      gains.massGains = Eigen::Vector6d::Constant(1);
                      gains.damperGains =  2.0 * gains.springGains.cwiseProduct(gains.massGains).cwiseSqrt();
                      gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  0.004;           
@@ -267,17 +267,13 @@ void DualArmControl::stateCollaborative(){
                             task->gains().damper().vec(gains.damperGains);
                             task->gains().wrench().vec(gains.wrenchGains); 
                      });  
-                     //updateContactForces();
-                     optimize();
-                     //if (std::abs(gains.lambda_desired - lambdaMeasured_) < 2){
-                     //       gains.collaborativeTime_ += timeStep;
-                    // }
-                     gains.collaborativeTime_ += timeStep;
+                     updateContactForces();
+                     if (std::abs(gains.lambda_desired - lambdaMeasured_) < 2){
+                            gains.collaborativeTime_ += timeStep;
+                     }
                      x_0_objectCurrent_ = computeDesiredObjectPose();
 
-                     
-
-                     
+                     demandforce = DemandForces(5.5);
 
                      // Converte la posa dell'oggetto nelle pose dei singoli end-effector usando gli offset registrati al contatto.
                      // Se l'HOLD è attivo, mc_rtc userà queste pose solo come direzione di movimento, mantenendo intatta 

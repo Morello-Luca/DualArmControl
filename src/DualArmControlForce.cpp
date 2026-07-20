@@ -71,7 +71,9 @@ void DualArmControl::currentInternalForce(){
               n_squeeze = N * (N.transpose() * n_s);
               n_squeeze.stableNormalize();
        lambdaMeasured_ = n_squeeze.transpose() * internalForce;
+       
        filtering();
+       meas = lambdaFiltered_lowpass_cut;
 }
 
 void DualArmControl::updateContactForces(){
@@ -159,3 +161,196 @@ void DualArmControl::CoulombForces(double mu){
 }
 
 
+
+
+void DualArmControl::lowPassWrench(sva::ForceVecd & filtered, const sva::ForceVecd & raw, double alpha) {
+    // Apllica la formula y(k) = y(k-1) + alpha * (x(k) - y(k-1)) sui vettori 3D
+    filtered.couple() += alpha * (raw.couple() - filtered.couple());
+    filtered.force()  += alpha * (raw.force()  - filtered.force());
+}
+
+
+void DualArmControl::optimize(){
+       currentInternalForce();
+    // ---------------------------------------------------------------------
+    // 0. Low-Pass Filtering dei Wrench Misurati
+    // ---------------------------------------------------------------------
+    double tau = 1.0 / (2.0 * M_PI * gains.cutoffPeriod);
+    double alpha_lpcut = timeStep / (tau + timeStep);
+
+    // Unica riga per ciascun Wrench
+    lowPassWrench(WL_filtered_, leftImpedanceTask_->measuredWrench(), alpha_lpcut);
+    lowPassWrench(WR_filtered_, rightImpedanceTask_->measuredWrench(), alpha_lpcut);
+
+    // ---------------------------------------------------------------------
+    // 1. Measured Wrench Transformation (World Frame)
+    // ---------------------------------------------------------------------
+    auto RL = robots().robot(leftRobotIndex_).bodyPosW(eeName_).rotation();
+    auto RR = robots().robot(rightRobotIndex_).bodyPosW(eeName_).rotation();
+    
+    Eigen::Matrix<double, 12, 1> f_meas;
+    f_meas.segment<3>(0) = RL * WL_filtered_.couple();
+    f_meas.segment<3>(3) = RL * WL_filtered_.force();
+    f_meas.segment<3>(6) = RR * WR_filtered_.couple();
+    f_meas.segment<3>(9) = RR * WR_filtered_.force();
+
+    // ---------------------------------------------------------------------
+    // 2. Null-Space Projection Matrix & Squeeze Direction
+    // ---------------------------------------------------------------------
+    Eigen::Matrix<double, 12, 12> Pint = Eigen::Matrix<double, 12, 12>::Identity() - Gpinv_ * G_;
+    Eigen::Matrix<double, 12, 1> internalForce = Pint * f_meas;
+
+    n_s << 0, 0, 0, 0, 1, 0,   // Left arm squeeze (+Y)
+           0, 0, 0, 0, -1, 0;  // Right arm squeeze (-Y)
+
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(G_, Eigen::ComputeFullV);
+    int rank = svd.rank();
+    Eigen::MatrixXd N = svd.matrixV().rightCols(G_.cols() - rank);
+    
+    n_squeeze = N * (N.transpose() * n_s);
+    n_squeeze.stableNormalize();
+
+    lambdaMeasured_ = n_squeeze.transpose() * internalForce;
+    filtering();
+
+    // ---------------------------------------------------------------------
+    // 3. Selection Matrix Sn (World Frame Normal Directions)
+    // ---------------------------------------------------------------------
+    // Local normal force vectors mapped to World Frame via end-effector orientations
+       Eigen::Vector3d u_L_world = RL * Eigen::Vector3d(0.0, 0.0, 1.0);
+       Eigen::Vector3d u_R_world = RR * Eigen::Vector3d(0.0, 0.0, 1.0);
+
+    Eigen::Matrix<double, 12, 2> S_n = Eigen::Matrix<double, 12, 2>::Zero();
+    S_n.block<3,1>(3, 0) = u_L_world; // Left force vector (rows 3-5)
+    S_n.block<3,1>(9, 1) = u_R_world; // Right force vector (rows 9-11)
+
+    // ---------------------------------------------------------------------
+    // 4. Mapping Vector c and Baseline Offset lambda0
+    // ---------------------------------------------------------------------
+    // c is a 2x1 column vector: c^T = n_squeeze^T * Pint * S_n
+    Eigen::Vector2d c = (n_squeeze.transpose() * Pint * S_n).transpose();
+
+    // Remove existing normal force components from f_meas to construct w_fixed
+    double FnL_meas = WL_filtered_.force().z(); // Local Z component
+    double FnR_meas = WR_filtered_.force().z(); 
+    Eigen::Vector2d x_meas(FnL_meas, FnR_meas);
+
+    Eigen::Matrix<double, 12, 1> w_fixed = f_meas - S_n * x_meas;
+    
+    // Compute scalar offset lambda0
+    double lambda0 = n_squeeze.dot(Pint * w_fixed);
+
+    // ---------------------------------------------------------------------
+    // 5. Construct QP Matrices (H and g)
+    // ---------------------------------------------------------------------
+    double alpha = 1.0; // Minimization gain
+    double beta  = 0.5; // Balancing gain
+
+    const double cL = c(0);
+    const double cR = c(1);
+
+    Eigen::Matrix2d H;
+    H << alpha * cL * cL + beta,  alpha * cL * cR - beta,
+         alpha * cL * cR - beta,  alpha * cR * cR + beta;
+    H *= 2.0;
+
+    Eigen::Vector2d g = 2.0 * alpha * lambda0 * c;
+    // ---------------------------------------------------------------------
+    // 6. Compute Minimum Normal Forces (F_min)
+    // ---------------------------------------------------------------------
+    // 1. Tangential force norms from local wrenches
+    double FtL = WL_filtered_.force().head<2>().norm(); // norm(Fx, Fy) o componenti tangenziali
+    double FtR = WR_filtered_.force().head<2>().norm();
+
+    // 2. Trajectory demand force
+    double K_demand = 10.0; // Dynamic scaling factor
+    double F_demand = DemandForces(K_demand);
+
+    // 3. Static offset force (fallback safety)
+    double F_static = -15.0; // Static baseline [N]
+    double mu = 0.5;       // Friction coefficient
+
+    // 4. Compute F_min for Left and Right contacts
+    double Fmin_L = std::min(FtL / mu, F_static - F_demand);
+    double Fmin_R = std::min(FtR / mu, F_static - F_demand);
+
+    // ---------------------------------------------------------------------
+    // 7. Define Bounds for QLDSolver
+    // ---------------------------------------------------------------------
+    Eigen::Vector2d xl(-80.0, -80.0); // Lower bounds [FnL_min, FnR_min]^T
+    Eigen::Vector2d xu(Fmin_L, Fmin_R);   // Upper safety bounds [FnL_max, FnR_max]^T
+    // ---------------------------------------------------------------------
+    // 8. Empty constraints (none in this problem)
+    // ---------------------------------------------------------------------
+    Eigen::MatrixXd Aeq(0, 2);
+    Eigen::VectorXd beq(0);
+
+    Eigen::MatrixXd Aineq(0, 2);
+    Eigen::VectorXd bineq(0);
+    // ---------------------------------------------------------------------
+    // 9. Solve the QP
+    // ---------------------------------------------------------------------
+    Eigen::QLD qld;
+    qld.problem(2, 0, 0);
+
+    Eigen::Vector2d x_opt; // Dichiarata fuori dal blocco IF per utilizzarla al Punto 10
+
+    bool success = qld.solve(
+        H,
+        g,
+        Aeq,
+        beq,
+        Aineq,
+        bineq,
+        xl,
+        xu,
+        false,
+        1e-6);
+
+    if(success)
+    {
+        x_opt = qld.result();
+        mc_rtc::log::success("Optimal forces: {:.2f} {:.2f}", x_opt(0), x_opt(1));
+    }
+    else
+    {
+        mc_rtc::log::error("QLD failed! Fallback to minimum safe forces.");
+        x_opt = xl; // Fallback di sicurezza: applica Fmin_L e Fmin_R
+    }
+
+    // ---------------------------------------------------------------------
+    // 10. Ricostruzione del Wrench & Invio ai Task di Impedenza
+    // ---------------------------------------------------------------------
+    // Wrench ottimo totale nel riferimento World
+    Eigen::Matrix<double, 12, 1> f_input = S_n * x_opt + w_fixed;
+
+    
+
+    Eigen::Matrix<double, 6, 1> wL_world = f_input.segment<6>(0);
+    Eigen::Matrix<double, 6, 1> wR_world = f_input.segment<6>(6);
+
+    mc_rtc::log::success("wL_world: {}", wL_world);
+    mc_rtc::log::success("wR_world: {}", wR_world);
+
+    // Trasformazione da World Frame a Riferimento Locale End-Effector
+    Eigen::Matrix<double, 6, 1> wL_local, wR_local;
+    wL_local.head<3>() = RL.transpose() * wL_world.head<3>();
+    wL_local.tail<3>() = RL.transpose() * wL_world.tail<3>();
+
+    wR_local.head<3>() = RR.transpose() * wR_world.head<3>();
+    wR_local.tail<3>() = RR.transpose() * wR_world.tail<3>();
+
+    // Assegnazione dei comandi Wrench
+    cmdLeft.couple() = wL_local.head<3>();
+    cmdLeft.force()  = wL_local.tail<3>();
+
+    cmdRight.couple() = wR_local.head<3>();
+    cmdRight.force()  = wR_local.tail<3>();
+
+    mc_rtc::log::success("cmdRight: {}",cmdRight.force());
+    mc_rtc::log::success("cmdLeft: {}",cmdLeft.force());
+
+    // Invio ai controller esterni di impedenza
+    leftImpedanceTask_->targetWrench(cmdLeft);
+    rightImpedanceTask_->targetWrench(cmdRight);
+}

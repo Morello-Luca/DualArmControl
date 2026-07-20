@@ -6,7 +6,8 @@
 #include <mc_tasks/ImpedanceTask.h>
 #include <mc_solver/BoundedSpeedConstr.h>
 #include <RBDyn/FD.h>
-#include <eigen-qld/QLD.h>
+#include <Tasks/QPSolver.h>
+
 
 
 struct GraspFrame
@@ -149,8 +150,6 @@ private:
   void entryStateCollaborative();
   void stateCollaborative();
 
-  void optimize();
-  void CoulombForces(double mu);
 
 
 
@@ -359,11 +358,5 @@ Eigen::VectorXd spd = Eigen::VectorXd::Zero(6);
 
 double DemandForces(double K) const;
 double demandforce=0;
-
-
-sva::ForceVecd WL_filtered_{Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()};
-    sva::ForceVecd WR_filtered_{Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()};
-    void lowPassWrench(sva::ForceVecd & filtered, const sva::ForceVecd & raw, double alpha);
-
 
 };
