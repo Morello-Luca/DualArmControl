@@ -73,6 +73,141 @@ subject to:
 $$ F_{n,L} \geq F_{min} $$
 $$ F_{n,R} \geq F_{min} $$
 
+ 
+---
+
+# Implementation Guide
+
+## Step 1 Decide the optimization variable
+
+Set the variable in our case 
+
+$$ 
+\begin{bmatrix}
+F_{n,L} \\
+F_{n,R}
+\end{bmatrix}
+$$
+
+so in c++
+
+```cpp
+Eigen::Vector2d x;
+```
+
+You never initialize ```x```. QLD will compute it.
+
+## Step 2 Build the cost function
+
+the proposed cost function:
+
+$$ J =  \underbrace{\alpha (\lambda_{grasp})^2}_{minimum Squeeze force} +
+        \underbrace{\beta (F_{n,L}-F_{n,R})^2}_{Balancing}  
+         $$
+
+but a QP solver wants:
+
+$$ J = \frac{1}{2}x^T H x + g^T x
+         $$
+
+so the first task is to compute ```H``` and ```g```
+
+## Step 3 Let's ignore the squeeze term first
+
+just for the simplicity make a QP that only minimizes
+
+$$ (F_{nL}-F_{nR})^2 $$
+expand it 
+$$ (F_{nL}-F_{nR})^2 = F_{nL}^2-2F_{nL}F_{nR}+F_{nR}^2 $$
+
+to calculate the hessian matrix we do
+
+$$
+H = 
+\begin{bmatrix}
+a & b \\
+b & c
+\end{bmatrix}
+$$
+
+we develop the first term
+
+$$ Hx = 
+\begin{bmatrix}
+ax_1 & bx_2 \\
+bx_1 & cx_2
+\end{bmatrix}
+$$
+
+$$ xHx =[x_1 x_2] 
+\begin{bmatrix}
+ax_1 & bx_2 \\
+bx_1 & cx_2
+\end{bmatrix}
+=
+ax_1^2 +2bx_1x_2 + cx_2^2
+$$
+
+finally we compare the coefficients from the origial expression
+
+$$
+ax_1^2 +2bx_1x_2 + cx_2^2 \\
+F_{nL}^2-2F_{nL}F_{nR}+F_{nR}^2
+$$
+
+we can see immidiately $$a = 1;$$ $$b=-1;$$ $$c = 1$$
+$$
+H = 
+\begin{bmatrix}
+1 & -1 \\
+-1 & 1
+\end{bmatrix}
+$$
+
+## Step 4 - Bounds
+Suppose
+
+```cpp
+FminL = 8N
+
+FminR = 9N
+```
+
+```cpp
+Eigen::Vector2d xl;
+Eigen::Vector2d xu;
+
+xl << FminL,
+      FminR;
+
+xu <<
+std::numeric_limits<double>::infinity(),
+std::numeric_limits<double>::infinity();
+```
+
+## Step 7 - Call the solver
+```
+solver.solve(
+H,
+g,
+Aeq,
+beq,
+Aineq,
+bineq,
+xl,
+xu);
+```
+
+
+
+
+
+
+
+
+
+
+
 
 
 # Contact Force Optimization Problem
@@ -265,3 +400,117 @@ $$
 {\begin{aligned} \mathbf{H} &= 2 \begin{bmatrix} \alpha c_L^2 + \beta & \alpha c_L c_R - \beta \\ \alpha c_L c_R - \beta & \alpha c_R^2 + \beta \end{bmatrix} \\ 
 \mathbf{g} &= 2 \alpha \lambda_0 \begin{bmatrix} c_L \\ c_R \end{bmatrix} \end{aligned}}
 $$
+
+
+# Implementation pipeline
+In every iteration of your control loop (inside updateContactForces()), the QP workflow follows these sequential steps:
+
+
+```
+
+[1. Sensor Inputs & Trajectory] 
+               │
+               ▼
+[2. Compute Bounds (F_min)] ────► Construct Inequality Matrices (Aineq, bineq, xl, xu)
+               │
+               ▼
+[3. Construct Mapping Vector c] ──► Construct Objective Matrices (H, g)
+               │
+               ▼
+[4. Solve QP with QLDSolver]
+               │
+               ▼
+[5. Extract Optimal Forces x*] ──► Convert to Wrench & Send to Impedance Controllers
+
+```
+
+## Step 1: Compute Dynamic Constraints ($F_{\text{min}}$)
+
+Before calling the solver, compute the lower bound for each contact force using your friction cone and motion profile metrics:
+
+1. Tangential Component Extraction:
+
+Extract tangential force norms from sensor measurements:
+
+$$\Vert{}F_{t,L}\Vert{} = \sqrt{F_{x,L}^2 + F_{y,L}^2}, \quad \Vert{}F_{t,R}\Vert{} = \sqrt{F_{x,R}^2 + F_{y,R}^2}$$
+
+2. Demand Force Evaluation:
+
+Call DemandForces(K) using your current normalized trajectory time $\tau = t/T$ to get $F_{\text{demand}}$.
+
+3. Lower Bound Thresholds:
+Compute lower limits:
+
+$$F_{\text{min}, L} = \max \left( \frac{\Vert{}F_{t,L}\Vert{}}{\mu_L}, \, F_{\text{static}} + F_{\text{demand}} \right)$$
+
+$$F_{\text{min}, R} = \max \left( \frac{\Vert{}F_{t,R}\Vert{}}{\mu_R}, \, F_{\text{static}} + F_{\text{demand}} \right)$$
+
+## Step 2: Build the Selection and Mapping Vectors ($S_n$ and $c$)
+
+To construct $H$ and $g$, you need $c = \begin{bmatrix} c_L & c_R \end{bmatrix}^T = S_n^T n_{\text{squeeze}}$.
+
+1. Extract Unit Normal Vectors:Retrieve orientation matrices ($R_L, R_R$) to express contact normals in world coordinates ($\hat{u}_L, \hat{u}_R$).
+
+2. Assemble Selection Matrix $S_n \in \mathbb{R}^{12 \times 2}$:Place $\hat{u}_L$ in the force section of the left arm (rows 3–5) and $\hat{u}_R$ in the right arm (rows 9–11).
+
+3. Compute $c \in \mathbb{R}^2$:Perform the matrix multiplication:
+
+$$c = S_n^T \, n_{\text{squeeze}}$$
+
+4. Compute Baseline Offset $\lambda_0$:Perform:
+
+$$\lambda_0 = n_{\text{squeeze}}^T \, w_{\text{fixed}}$$
+
+## Step 3: Construct QP Objective Matrices ($H$ and $g$)
+
+Using the weights $\alpha$ (squeeze minimization) and $\beta$ (force balancing):
+
+Hessian Matrix $H \in \mathbb{R}^{2 \times 2}$:
+
+$$H(0,0) = 2(\alpha \, c_L^2 + \beta)$$
+
+$$H(0,1) = 2(\alpha \, c_L c_R - \beta)$$
+
+$$H(1,0) = H(0,1)$$
+
+$$H(1,1) = 2(\alpha \, c_R^2 + \beta)$$
+
+Gradient Vector $g \in \mathbb{R}^2$:
+
+$$g = 2 \, \alpha \, \lambda_0 \begin{bmatrix} c_L \\ c_R \end{bmatrix}$$
+
+## Step 4: Map Constraints into eigen-qld Format
+eigen-qld expects constraints in the canonical form:
+
+$$A_{\text{eq}} x = b_{\text{eq}}$$
+
+$$A_{\text{ineq}} x \geq b_{\text{ineq}}$$
+
+$$x_l \leq x \leq x_u$$
+
+Since $F_{n,L} \geq F_{\text{min},L}$ and $F_{n,R} \geq F_{\text{min},R}$ can be expressed directly as simple variable bounds ($x_l \leq x \leq x_u$):
+
+1. Equality Matrices ($A_{\text{eq}}, b_{\text{eq}}$):Set to empty matrices/vectors ($0 \times 2$ and $0 \times 1$), as there are no hard equality constraints.
+
+2. Inequality Matrices ($A_{\text{ineq}}, b_{\text{ineq}}$):Set to empty matrices/vectors if lower bounds are handled by $x_l$. Alternatively, populate as $I_2 \cdot x \geq \begin{bmatrix} F_{\text{min}, L} \\ F_{\text{min}, R} \end{bmatrix}$.
+
+3. Lower Bounds Vector ($x_l \in \mathbb{R}^2$):$$x_l = \begin{bmatrix} F_{\text{min}, L} \\ F_{\text{min}, R} \end{bmatrix}$$
+
+4. Upper Bounds Vector ($x_u \in \mathbb{R}^2$):Set to maximum safety limits (e.g., $80.0 \text{ N}$):$$x_u = \begin{bmatrix} F_{\text{max}} \\ F_{\text{max}} \end{bmatrix}$$
+
+## Step 5: Solve and Apply Control Commands
+
+1. Solve QP:Pass $(H, g, A_{\text{eq}}, b_{\text{eq}}, A_{\text{ineq}}, b_{\text{ineq}}, x_l, x_u)$ to QLDSolver::solve().
+
+2. Extract Decision Variables:If the solver succeeds, extract $x^* = \begin{bmatrix} F_{n,L}^* \\ F_{n,R}^* \end{bmatrix} = \text{solver.result()}$.
+
+3. Reconstruct 12D Wrench Command:
+
+Map normal forces back into the full 12D wrench vector:
+
+$$f_{\text{input}} = S_n x^* + w_{\text{fixed}}$$
+
+4. Transform to Local End-Effector Frames:Rotate local force and torque vectors using $R_L^T$ and $R_R^T$.
+
+5. Send Commands:
+Pass the calculated wrenches to leftImpedanceTask_->targetWrench() and rightImpedanceTask_->targetWrench().
