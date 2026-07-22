@@ -1,7 +1,8 @@
 #include "DualArmQPOptimizer.h"
 #include <algorithm>
 
-DualArmQPOptimizer::DualArmQPOptimizer() 
+DualArmQPOptimizer::DualArmQPOptimizer(const Params& params) 
+    : params_(params) 
 {
     qld_.problem(2, 0, 0); // 2 variabili, 0 uguaglianze, 0 disuguaglianze generiche
 }
@@ -27,12 +28,12 @@ std::pair<Eigen::Matrix2d, Eigen::Vector2d> DualArmQPOptimizer::buildQPProblem(
 
     // 4. Costruzione della matrice Hessiana H (2x2)
     Eigen::Matrix2d H;
-    H << params.alpha * cL * cL + params.beta,  params.alpha * cL * cR - params.beta,
-         params.alpha * cL * cR - params.beta,  params.alpha * cR * cR + params.beta;
+    H << params_.alpha * cL * cL + params_.beta,  params_.alpha * cL * cR - params_.beta,
+         params_.alpha * cL * cR - params_.beta,  params_.alpha * cR * cR + params_.beta;
     H *= 2.0; // Moltiplicazione per 2 richiesta dal solutore QP
 
     // 5. Costruzione del vettore gradiente g (2x1)
-    Eigen::Vector2d g = 2.0 * params.alpha * lambda0 * c;
+    Eigen::Vector2d g = 2.0 * params_.alpha * lambda0 * c;
 
     return {H, g};
 }
@@ -84,7 +85,7 @@ bool DualArmQPOptimizer::optimize(const InputData& input,const Params& params, E
     auto [H, g] = buildQPProblem(n_squeeze, input.Pint, S_n, w_fixed, params);
 
     // 5. CHIAMATA AL METODO ISOLATO PER I BOUNDS
-    auto [xl, xu] = computeBounds(input.left_local_force, input.right_local_force, input.F_demand,params);
+    auto [xl, xu] = computeBounds(input.left_local_force, input.right_local_force, input.F_demand);
 
     // 6. Soluzione del problema con QD
     Eigen::MatrixXd Aeq(0, 2), Aineq(0, 2);

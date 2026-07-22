@@ -1,6 +1,5 @@
 #include "DualArmControl.h"
 
-
 sva::PTransformd DualArmControl::computeDesiredObjectPose(){
        t_norm = std::min(1.0, gains.collaborativeTime_ / gains.totalTrajectoryDuration_);
        if (t_norm >= 1.0) {return x_0_objectWaypoint1_;}
@@ -20,18 +19,4 @@ sva::PTransformd DualArmControl::computeDesiredObjectPose(){
        return desiredPose;
 }
 
-double DualArmControl::alpha(double e, double L,double k){
-       double z = std::max(0.0, std::min(e / L, 1.0));
-       return 0.5 * (1.0 - std::cos(M_PI * std::pow(z, k)));
-}
 
-double DualArmControl::beta(double spring, double initial_value, double final_value){
-       return initial_value + spring * (final_value - initial_value);
-}
-
-
-
-
-    
-
-    

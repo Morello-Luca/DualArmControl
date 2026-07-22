@@ -6,7 +6,7 @@ set(controller_SRC
   DualArmControlGrasp.cpp
   DualArmControlLogging.cpp
   DualArmControlImpact.cpp
-  DualArmQPOptimizer.cpp
+  
 )
 
 set(controller_HDR

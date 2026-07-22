@@ -265,3 +265,22 @@ In questo istante, l'ambiente vede solo l'inerzia riflessa. Se questa è altissi
 ### Fase 2: La Risposta del Controllo (Dopo l'impatto)
 Solo dopo qualche millisecondo il computer legge il sensore di forza e dice al motore di alleggerirsi. Qui entra in gioco la massa virtuale ($m_{\text{virtuale}}$).Ecco perché, come dicevi prima, se tu imposti una massa virtuale più piccola dell'inerzia riflessa ($m_{\text{virtuale}} < m_{\text{riflessa}}$), stai dicendo al controllore di essere estremamente "morbido" e reattivo per compensare quella tremenda "martellata" passiva iniziale dovuta all'inerzia riflessa, evitando il rimbalzo.
 
+
+
+# 22 LUGLIO
+
+cambiare architettura usando parte delle cose gia fatte ma inserendo un mpc, parallelo
+
+## STRUTTURA
+
+- **stato:** $$ [z, \dot{z}] $$ along the contact normal
+ - maybe augmented with the forces
+
+- **Pre-contact phase model:** simple double integrator, $$ \ddot{z} = u $$ ($$u = $$ commanded normal acceleration, bounded by your torque/velocity limits).
+
+- **Terminal constraint (this is where last message's impulse model plugs in):** at the horizon step where predicted z crosses the contact surface, constrain the predicted contact velocity $v_n$ so that F_peak_predicted($v_n$, $m_reflected_z$, $e_max$) $\leq$ $F_max$ — i.e., the restitution/impulse formula from before becomes a terminal inequality constraint in the MPC, exactly like the UAV paper's restitution-embedded contact dynamics.
+
+- **Cost:** track your nominal approach trajectory, penalize deviation and control effort, small terminal weight pulling $$v_n$$ toward a target contact speed (not necessarily zero — you may want moderate impact velocity for a fast grasp).
+
+- **Output:** feed the MPC's planned ż (or spd(5)) into your existing boundSpeed() each cycle — no change needed to your mc_rtc integration, just where the reference comes from.
+

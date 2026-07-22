@@ -7,7 +7,6 @@
 #include <mc_solver/BoundedSpeedConstr.h>
 #include <RBDyn/FD.h>
 #include <eigen-qld/QLD.h>
-#include "DualArmQPOptimizer.h"
 
 
 struct GraspFrame
@@ -366,21 +365,5 @@ sva::ForceVecd WL_filtered_{Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()};
     sva::ForceVecd WR_filtered_{Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()};
     void lowPassWrench(sva::ForceVecd & filtered, const sva::ForceVecd & raw, double alpha);
 
-
-
-
-DualArmQPOptimizer qpOptimizer_;
-                                    double ezLeft;  
-                            double ezRight; 
-
-
-sva::PTransformd sx{Eigen::Matrix3d::Identity(),Eigen::Vector3d::Zero()};
-sva::PTransformd dx{Eigen::Matrix3d::Identity(),Eigen::Vector3d::Zero()};
-
-
-double alpha(double e, double L,double k = 1);
-
-
-double beta(double spring, double initial_value, double final_value);
 
 };

@@ -31,18 +31,7 @@ void DualArmControl::registerCollaborativeLogs(){
               addLog("ContactForce_Reference_Right", cmdRight);
                      
               addLog("InternalForce_DemandForce", demandforce);
-
-              // =========================================================================
-              // IMPEDANCE TASK
-              // =========================================================================
-
-              addLog("ImpedanceTask_Left_MeasuredWrench",    leftImpedanceTask_->filteredMeasuredWrench());
-              addLog("ImpedanceTask_Left_TargetWrench",      leftImpedanceTask_->targetWrench());
-              addLog("ImpedanceTask_Left_Error",             leftImpedanceTask_->filteredMeasuredWrench() - leftImpedanceTask_->targetWrench());
-              addLog("ImpedanceTask_Right_MeasuredWrench",   rightImpedanceTask_->filteredMeasuredWrench());
-              addLog("ImpedanceTask_Right_TargetWrench",     rightImpedanceTask_->targetWrench());
-              addLog("ImpedanceTask_Right_Error",            rightImpedanceTask_->filteredMeasuredWrench() - rightImpedanceTask_->targetWrench());
-             
+              
 
               // =========================================================================
               // TRAJECTORY ENDEFFECTORS
@@ -51,13 +40,8 @@ void DualArmControl::registerCollaborativeLogs(){
               //addLog("EndEffectorsTajectory_LeftArm_ActualOrientation", robots().robot(leftRobotIndex_).bodyPosW(eeName_).translation());
               addLog("EndEffectorsTajectory_RightArm_ActualTranslation",  robots().robot(rightRobotIndex_).bodyPosW(eeName_).translation());
               //addLog("EndEffectorsTajectory_LeftArm_ActualOrientation", robots().robot(leftRobotIndex_).bodyPosW(eeName_).translation());
-              addLog("EndEffectorsTajectory_LeftArm_TargetTranslation",   sx);
-              addLog("EndEffectorsTajectory_RightArm_TargetTranslation",  dx);   
-              
-              
-              addLog("EndEffectorsTajectory_Zerror_left",   ezLeft);
-              addLog("EndEffectorsTajectory_Zerror_right",  ezRight);   
-
+              addLog("EndEffectorsTajectory_LeftArm_TargetTranslation",   X_0_leftTarget.translation());
+              addLog("EndEffectorsTajectory_RightArm_TargetTranslation",  X_0_rightTarget.translation());            
               // =========================================================================
               // TRAJECTORY OBJECT
               // =========================================================================              

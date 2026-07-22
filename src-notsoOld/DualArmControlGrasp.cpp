@@ -46,15 +46,12 @@ GraspFrame DualArmControl::buildGraspFrame(){
               Eigen::Matrix3d skew_rL = skew(rL);
               Eigen::Matrix3d skew_rR = skew(rR);
               G_.setZero();
-              // Output torque
-              G_.block<3,3>(0,0) = I;          // τL
-              G_.block<3,3>(0,3) = skew_rL;    // rL × fL
-              G_.block<3,3>(0,6) = I;          // τR
-              G_.block<3,3>(0,9) = skew_rR;    // rR × fR
-
-              // Output force
-              G_.block<3,3>(3,3) = I;          // fL
-              G_.block<3,3>(3,9) = I;          // fR
+              G_.block<3, 3>(0, 0) = I;
+              G_.block<3, 3>(0, 6) = I;
+              G_.block<3, 3>(3, 0) = skew_rL;
+              G_.block<3, 3>(3, 3) = I;
+              G_.block<3, 3>(3, 6) = skew_rR;
+              G_.block<3, 3>(3, 9) = I;
        // =========================================================================
        // PSEUDOINVERSE
        // =========================================================================

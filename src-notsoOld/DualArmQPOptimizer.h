@@ -43,11 +43,10 @@ private:
                                                                 const Eigen::Matrix<double, 12, 12>& Pint,
                                                                 const Eigen::Matrix<double, 12, 2>& S_n, 
                                                                 const Eigen::Matrix<double, 12, 1>& w_fixed,
-                                                                const Params& params);
+                                                                const Params& params)
         
     std::pair<Eigen::Vector2d, Eigen::Vector2d> computeBounds(
         const Eigen::Vector3d& fL, 
         const Eigen::Vector3d& fR, 
-        double F_demand,
-        const Params& params);
+        double F_demand);
 };

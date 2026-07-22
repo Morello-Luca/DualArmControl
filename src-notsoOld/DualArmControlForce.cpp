@@ -104,9 +104,9 @@ void DualArmControl::optimize() {
     DualArmQPOptimizer::Params qpParams;
     qpParams.alpha    = 1.0; 
     qpParams.beta     = 0.5;
-    qpParams.mu       = 0.5;              // Preso dinamicamente da mc_rtc o dal tuo robot
-    qpParams.F_static = -15;              // Preso dinamicamente
-    qpParams.K_demand = 8.0;
+    qpParams.mu       = 0.5;             // Preso dinamicamente da mc_rtc o dal tuo robot
+    qpParams.F_static = -15;       // Preso dinamicamente
+    qpParams.K_demand = 10.0;
 
     // 2. Preparazione Dati di Input per il QP
     DualArmQPOptimizer::InputData qpInput;
@@ -125,7 +125,7 @@ void DualArmControl::optimize() {
 
     // 3. Chiamata all'Ottimizzatore Isolato
     Eigen::Matrix<double, 12, 1> f_input;
-    bool QP_success = qpOptimizer_.optimize(qpInput, qpParams, f_input);
+    bool QP_success = qpOptimizer_.optimize(qpInput, f_input);
 
     if (!QP_success) {
         mc_rtc::log::error("QLD failed! Fallback applicato internamente.");
