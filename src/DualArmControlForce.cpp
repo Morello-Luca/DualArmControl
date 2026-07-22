@@ -108,6 +108,11 @@ void DualArmControl::optimize() {
     qpParams.F_static = -15;              // Preso dinamicamente
     qpParams.K_demand = 8.0;
 
+    // Parametri per la minimizzazione della coppia nello spazio dei giunti (opzionali, decommentabili per attivarli)
+    qpParams.gamma_L = 0.01;              // Se > 0, penalizza la norma delle coppie del braccio sinistro
+    qpParams.gamma_R = 0.01;              // Se > 0, penalizza la norma delle coppie del braccio destro
+    qpParams.enable_joint_limits = true;  // Abilita i limiti fisici di coppia dei giunti nella QP
+
     // 2. Preparazione Dati di Input per il QP
     DualArmQPOptimizer::InputData qpInput;
     qpInput.RL = robots().robot(leftRobotIndex_).bodyPosW(eeName_).rotation();
@@ -122,6 +127,13 @@ void DualArmControl::optimize() {
     qpInput.left_local_force = WL_filtered_.force();
     qpInput.right_local_force = WR_filtered_.force();
     qpInput.F_demand = DemandForces(10.0); // K_demand = 10.0
+
+    // Popolamento dei parametri dello spazio dei giunti per la capacità di coppia
+    // Assegna qui i Jacobiani calcolati e i limiti se abilitati:
+    // qpInput.J_L = ... (MatrixXd 6 x n_L)
+    // qpInput.J_R = ... (MatrixXd 6 x n_R)
+    // qpInput.tau_max_L = ... (VectorXd n_L)
+    // qpInput.tau_max_R = ... (VectorXd n_R)
 
     // 3. Chiamata all'Ottimizzatore Isolato
     Eigen::Matrix<double, 12, 1> f_input;

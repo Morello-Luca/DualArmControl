@@ -5,11 +5,12 @@
 ---
 
 # Abstract
-- Cooperative dual-arm transport requires enough squeeze force to prevent slip, but constant/over-conservative squeeze force wastes actuation effort and risks damaging fragile objects.
+- Cooperative dual-arm transport needs enough squeeze force to prevent slip, but constant or over-conservative squeeze force wastes actuation effort and risks damaging fragile objects.
 - We decompose the 12D dual-arm contact wrench into internal (squeeze) and external (task) components via a nullspace projection of the grasp matrix.
 - We formulate a real-time 2-variable QP that allocates per-arm normal forces, minimizing squeeze effort and balancing the load between arms subject to friction-derived bounds.
 - We couple the minimal grasp-force bound to the *motion state* of the manipulation task ("task-on-demand"), so the safety margin grows only while the object is in transit and relaxes at rest.
-- We report [platform / metric placeholders]: internal force tracking error, friction-margin utilization, and squeeze effort with vs. without the motion-adaptive term.
+- We extend the same QP, at no extra decision-variable cost, with a joint-torque-aware penalty that biases squeeze-force allocation toward the arm with more actuation margin.
+- We report internal force tracking error, friction-margin utilization, and squeeze effort with vs. without the motion-adaptive term, and with vs. without the joint-torque-aware penalty.
 - We identify a coupling failure mode during lateral translation (impedance spring force and motion direction opposing each other, causing contact loss) and describe a stopgap (activation-blended stiffness/wrench-gain switching) plus the target long-term fix (orthogonal task-space separation).
 
 ---
@@ -24,13 +25,16 @@
 ## I-B. Positioning
 - Cooperative-manipulation force-distribution literature optimizes internal force statically or per-instant, without a motion-state-dependent target.
 - Motion/slip-adaptive grip-force literature is mostly single-gripper and slip-*reactive* (triggered after slip is detected/predicted), not posed as a dual-arm allocation problem.
+- Force-distribution literature rarely couples the allocation decision back to each arm's actuation margin (joint torque headroom); it is typically treated at the end-effector/wrench level only.
 
 ## I-C. Gap
 - No existing framework couples: (a) nullspace-based internal/external wrench decomposition, (b) real-time QP allocation of squeeze force between two arms, and (c) a motion-derived force demand that is proactive (scheduled/estimated from the task's motion state) rather than reactive (slip-triggered).
+- Joint-space actuation capacity (torque headroom, proximity to singularity/thermal limits) is not typically fed back into a real-time end-effector-level force allocator, despite the wrench-to-torque map being affine and cheap to exploit.
 
 ## I-D. Contributions
 - A QP formulation for real-time squeeze-force allocation between two cooperating arms with friction-aware bounds.
 - A motion-adaptive minimal-force term ("task-on-demand") that couples the desired grasp-force floor to the object's motion state, contrasted with a constant-safety-margin baseline.
+- A joint-torque-capacity-aware extension of the same QP that biases allocation toward the arm with more actuation margin, added as a quadratic term with no increase in problem size or solver cost.
 - Identification and a first mitigation (activation-blended gain switching) for a coupling failure mode between impedance stiffness and wrench gain during lateral translation.
 - Validation on a dual xArm7 platform (`mc_rtc`).
 
@@ -42,14 +46,14 @@
 - Classical hybrid two-arm coordination and internal/external wrench split (Uchiyama & Dauchez).
 - QP-based minimization of internal forces in cooperating manipulators (Nahon & Angeles, 1992).
 - NLP/QP force-distribution schemes with normal-force constraints (Kwon & Lee; Kazerooni).
-- Recent result: nonsqueezing internal load distributions from a generalized inverse of the grasp matrix are **not unique** — used here to justify the explicit α/β objective choice rather than treating it as "the" optimal split.
+- Recent result: nonsqueezing internal load distributions from a generalized inverse of the grasp matrix are **not unique** — used here to justify the explicit weighted-objective choice rather than treating it as "the" optimal split.
 - Admittance/QP dual-arm cobot frameworks regulating internal vs. external effort for safe bimanual interaction (BAZAR-style hierarchical QP).
 - Recent (2025–2026) HQP variants for mobile / free-floating dual-arm systems — evidence the nullspace-projection + QP-allocation architecture is a current, accepted publication pattern.
 
 ## II-B. Friction-cone-constrained grasp/contact force optimization
 - Canonical exact formulation: friction-cone feasibility as positive-definiteness / SDP (Buss, Hashimoto & Moore, 1996).
 - Polyhedral/linear approximations of the friction cone for LP/QP tractability (Kerr & Roth; Cheng & Orin).
-- Recent (2026) explicit SOCP-vs-QP tradeoff discussion for real-time grasp force control — supports the choice of a linear/QP friction bound over an exact SOCP cone for a real-time 2-DoF allocator.
+- Recent (2026) explicit SOCP-vs-QP tradeoff discussion for real-time grasp force control — supports the choice of a linear/QP friction bound over an exact SOCP cone for a real-time low-dimensional allocator.
 
 ## II-C. Motion- and slip-adaptive grip force control
 - Biological grounding: grip force/load force coordination and friction-dependent safety margin (Westling & Johansson, 1984).
@@ -57,12 +61,17 @@
 - Human hand-acceleration modulation alongside grip-force modulation for slip prevention (2024 study) — motivates a velocity/acceleration-*estimated* demand term over a purely schedule-driven one.
 - Reactive slip control via internal-force optimization for multifingered hands, arguing uniform force increases perturb object pose vs. allocation-aware optimization (2026 arXiv) — closest conceptual neighbor to the allocation argument here.
 
-## II-D. Contact-state transition and hybrid position/force control
-- Classical orthogonal position/force subspace decomposition (Raibert & Craig, 1981) — target formalism for the lateral-translation coupling issue (§VII).
+## II-D. Joint-space capacity-aware force/torque allocation
+- Redundancy resolution and torque-optimal force distribution in multi-arm/legged systems (classical: minimum-norm/weighted pseudoinverse torque allocation).
+- Whole-body / multi-contact QP controllers that penalize joint torque proximity to limits as part of the cost (locomotion literature: contact-force QPs with torque or actuation-margin regularization).
+- Positioning: this paper brings the same *idea* — actuation-margin-aware cost shaping — into a minimal, 2-variable dual-arm squeeze allocator, kept analytically quadratic so it costs nothing extra to solve in real time.
+
+## II-E. Contact-state transition and hybrid position/force control
+- Classical orthogonal position/force subspace decomposition (Raibert & Craig, 1981) — target formalism for the lateral-translation coupling issue (§VIII).
 - Recent orthogonal interaction-frame decompositions for contact-rich manipulation (2026) — modern instance of the same idea, cited as the direction for the long-term fix.
 - Smooth controller blending / gain interpolation across contact-state transitions (changing-contact manipulation frameworks) — precedent for the interim raised-cosine activation blend used here.
 
-## II-E. Impact-aware contact establishment *(background only, not a claimed contribution)*
+## II-F. Impact-aware contact establishment *(background only, not a claimed contribution)*
 - Dual-arm impact-aware grasping via time-invariant reference spreading control (van Steen, Coşgun, van de Wouw, Saccon, IFAC 2023).
 - QP-based reference spreading control for dual-arm manipulation with planned simultaneous impacts (van Steen et al., IEEE T-RO 2024).
 - Preemptive impact reduction smoothly connected to contact impedance control (Arita et al., 2022/2023).
@@ -86,7 +95,8 @@
 - At every control cycle, find per-arm normal (squeeze) forces `x = [F_{n,L}, F_{n,R}]^T` that:
   - track a desired internal grasp force level,
   - respect friction-derived and actuation bounds,
-  - remain balanced between the two arms.
+  - remain balanced between the two arms,
+  - (extension, §VII) respect each arm's instantaneous joint-torque margin.
 
 ---
 
@@ -132,7 +142,7 @@
 - $F_{demand} = k\cdot v_{obj,est}$ (single-lobe, non-negative by construction, no need for $|\cdot|$ on a sign-changing polynomial).
 - Requires filtering (reuse existing α-β / low-pass stage) before use as a QP bound input, to avoid injecting solver-level velocity noise into commanded squeeze force.
 - Generalizes across trajectory generators (quintic, S-curve, teleoperated, DS-based) since it consumes a measured signal, not a planner-specific clock.
-- Optional hybrid: schedule term as smooth feedforward baseline + small proportional correction from planned-vs-measured velocity error — proposed as the ablation condition (c) in §IX.
+- Optional hybrid: schedule term as smooth feedforward baseline + small proportional correction from planned-vs-measured velocity error — proposed as the ablation condition (c) in §X.
 
 ## V-D. Minimal Grasp Force Bound
 - $F_{min} = \max\left(\dfrac{\lVert F_t\rVert}{\mu},\; F_{static} + F_{demand}\right)$ — per arm.
@@ -170,74 +180,108 @@
 
 ---
 
-# VII. Contact Maintenance under Lateral Translation
+# VII. Joint-Torque-Capacity-Aware Extension
 
-## VII-A. Failure Mode
+## VII-A. Motivation
+- The QP so far allocates squeeze force purely at the end-effector/wrench level; it has no notion of how "expensive" that allocation is for each arm's joints.
+- End-effector wrenches map to joint torques via the Jacobian transpose ($\tau = J^Tw$); since $w$ is already affine in $x$, joint torques are affine in $x$ too — exploitable at zero extra variable cost.
+- Goal: bias squeeze-force allocation toward the arm with more actuation margin (e.g., further from a singular configuration, less thermally loaded, or with more torque headroom), without adding decision variables or leaving the real-time QP structure.
+
+## VII-B. Affine Torque Map
+- Per-arm contact wrench: $w_L = w_{fixed,L} + S_{n,L}F_{n,L}$, $w_R = w_{fixed,R} + S_{n,R}F_{n,R}$.
+- Corresponding joint-torque contributions: $\tau_{c,L}(x) = J_L^Tw_{fixed,L} + J_L^TS_{n,L}F_{n,L}$, $\tau_{c,R}(x) = J_R^Tw_{fixed,R} + J_R^TS_{n,R}F_{n,R}$ — affine in $x$, same structure as $\lambda_{grasp}(x)$ in §IV-D.
+
+## VII-C. Extended Cost Function
+- $J(x) = \alpha\,\lambda_{grasp}(x)^2 + \beta\,(F_{n,L}-F_{n,R})^2 + \gamma_L\lVert\tau_{c,L}(x)\rVert^2 + \gamma_R\lVert\tau_{c,R}(x)\rVert^2$.
+- Each new term is quadratic in $x$ exactly like the existing two — contributes closed-form additions to the same $H,g$ pair (§VI-B), no change to problem dimension (still 2 variables) or solver.
+- Term-by-term reading of the four-way trade-off: $\alpha$ (avoid crushing the object), $\beta$ (keep contact forces even), $\gamma_L,\gamma_R$ (avoid joint torque overload on each arm respectively).
+
+## VII-D. Role and Tuning of $\gamma_L, \gamma_R$
+- $\gamma_L=\gamma_R=0$ recovers the original §VI formulation exactly — the extension is strictly backward-compatible, useful for a clean ablation (with/without torque awareness) rather than a redesign.
+- Small, equal, nonzero values (e.g., 0.01–0.1) protect joint torque margin without materially disrupting grasp-force tracking — report the smallest $\gamma$ that yields a measurable protective effect.
+- Asymmetric values ($\gamma_L\neq\gamma_R$) let the allocator favor the arm with more capacity — e.g., setting $\gamma_L$ higher than $\gamma_R$ to shift squeeze effort onto the right arm when the left arm is known (a priori, per configuration/experiment) to be closer to a singularity, torque limit, or thermal derate. This is a manually-set, per-run configuration choice in the current implementation, not an online adjustment (§VII-E).
+- Runtime-configurable (same `Params`-struct pattern as $\alpha,\beta$): supports live tuning/disabling on hardware without recompilation — worth stating as a practical/reproducibility point, not just a design nicety.
+
+## VII-E. Implementation Status
+- $\gamma_L,\gamma_R$ are implemented as fixed, manually-tuned entries in the same `Params` struct as $\alpha,\beta$ — constant gains, not driven by a live capacity signal (manipulability, torque headroom, temperature).
+- State this plainly in the paper as the scope of the current contribution: a *static*-weight torque-aware allocator. Avoid implying closed-loop/adaptive capacity-awareness anywhere else in the text (abstract, intro contributions) — the claim is "the cost function is structured to allow it," not "the system currently senses and reacts to it."
+- A state-driven $\gamma(t)$ version is future work only (§XII), not part of this paper's validated contribution.
+
+---
+
+# VIII. Contact Maintenance under Lateral Translation
+
+## VIII-A. Failure Mode
 - Observed during lateral (non-axial) translation: impedance spring force direction and commanded motion direction oppose each other at certain phases, causing loss of contact.
 - Root cause (to state precisely in the paper): spring/wrench-gain terms tuned for the axial (squeeze) direction are not decoupled from the lateral motion-tracking terms — they compete rather than being orthogonal.
 
-## VII-B. Interim Mitigation (implemented, stopgap)
+## VIII-B. Interim Mitigation (implemented, stopgap)
 - Raised-cosine activation function used to smoothly deactivate spring stiffness and increase wrench gain on the manipulator, timed to the lateral-translation phase.
 - Framing for the paper: an *engineering mitigation*, not the proposed contribution — present it as a documented, characterized stopgap (with its own small validation plot), not as a core claim.
 - Report: activation window shape/duration, effect on contact-loss incidence before/after, any residual discontinuity at the blend boundaries.
-- Cite as precedent: smooth controller-blending strategies across contact-state transitions in changing-contact manipulation frameworks (§II-D).
+- Cite as precedent: smooth controller-blending strategies across contact-state transitions in changing-contact manipulation frameworks (§II-E).
 
-## VII-C. Target Formulation (future work, flagged here not solved)
+## VIII-C. Target Formulation (future work, flagged here not solved)
 - Reformulate as orthogonal task-space separation: decompose the task space into complementary force-controlled and motion-controlled subspaces so spring/wrench-gain terms and lateral motion-tracking terms act on disjoint directions by construction, rather than being reconciled post hoc via gain blending.
 - Cite the classical hybrid position/force orthogonal-subspace formulation (Raibert & Craig, 1981) and a recent interaction-frame instance (2026) as the target formalism.
-- State explicitly in Discussion/Future Work: this is the theoretically clean fix; §VII-B is the empirical bridge used to keep the current experiments running while it's developed.
+- State explicitly in Discussion/Future Work: this is the theoretically clean fix; §VIII-B is the empirical bridge used to keep the current experiments running while it's developed.
 
 ---
 
-# VIII. Grasp Establishment *(brief, supporting only)*
+# IX. Grasp Establishment *(brief, supporting only)*
 
 - One paragraph + one figure: reflected-mass-scaled virtual mass during `Build-Grasp` softens first contact.
 - Explicitly framed as adopting existing ideas (reflected/effective mass, preemptive impedance softening) — cite Khatib, Arita et al. — **not** presented as a contribution of this paper.
-- State the limitation plainly: heuristic softening term, not a modeled impact-aware controller; full treatment (reference spreading / impact-aware QP) left as future work (§II-E, §XI).
+- State the limitation plainly: heuristic softening term, not a modeled impact-aware controller; full treatment (reference spreading / impact-aware QP) left as future work (§II-F, §XII).
 
 ---
 
-# IX. Experimental Validation
+# X. Experimental Validation
 
-## IX-A. Platform and Protocol
+## X-A. Platform and Protocol
 - Dual xArm7, `mc_rtc`.
-- Pick–carry–place trajectory; conditions: (a) constant `F_static` baseline, (b) schedule-driven `F_demand` (§V-B), (c) motion-estimated `F_demand` (§V-C, if implemented in time), (d) hybrid (§V-C).
+- Pick–carry–place trajectory; force-demand conditions: (a) constant `F_static` baseline, (b) schedule-driven `F_demand` (§V-B), (c) motion-estimated `F_demand` (§V-C, if implemented in time), (d) hybrid (§V-C).
+- Torque-awareness conditions: with vs. without the §VII extension, symmetric vs. asymmetric $\gamma_L,\gamma_R$.
 - Secondary sweep: object mass and/or surface friction, if feasible.
 
-## IX-B. Metrics
+## X-B. Metrics
 - Internal force tracking error vs. $\lambda_{desired}$.
 - Peak/RMS tangential force relative to the friction bound (slip-margin proxy).
 - Total squeeze effort $\int \lVert x\rVert\,dt$ (efficiency).
-- Contact-loss incidence during lateral translation, with vs. without the §VII-B activation blend.
-- QP solve time distribution.
+- Peak/RMS joint torque per arm, and margin-to-limit, with vs. without §VII.
+- Contact-loss incidence during lateral translation, with vs. without the §VIII-B activation blend.
+- QP solve time distribution (should remain sub-millisecond even with the §VII extension, since problem size is unchanged — worth confirming and reporting explicitly).
 
-## IX-C. Figures
+## X-C. Figures
 - FSM / system diagram.
-- Internal force vs. trajectory phase, all conditions overlaid.
+- Internal force vs. trajectory phase, all demand conditions overlaid.
 - Friction-margin utilization over the trajectory.
+- Joint torque per arm, with vs. without torque-aware weighting, under an induced asymmetric-capacity scenario.
 - Contact-loss / activation-blend before-after comparison.
 - Solve-time histogram.
 
 ---
 
-# X. Discussion and Limitations
+# XI. Discussion and Limitations
 
-- Nonuniqueness of the internal/external decomposition (§II-A): the α/β weighting is a design choice, not "the" optimal split — state what it privileges (low effort vs. balance) and how that choice was made.
+- Nonuniqueness of the internal/external decomposition (§II-A): the weighted objective is a design choice, not "the" optimal split — state what it privileges (low effort vs. balance vs. torque margin) and how that choice was made.
 - Linearized, one-cycle-lagged friction bound vs. exact cone: identify the regime where it could fail (fast tangential-force transients).
 - Schedule-driven vs. motion-estimated demand: generalizability tradeoff if the final version keeps the schedule-driven term as primary.
+- Fixed vs. state-driven $\gamma_L,\gamma_R$: fixed weights are easy to defend but don't truly track live actuation capacity; flag this as the natural next step rather than overclaiming adaptivity that isn't implemented yet.
 - Lateral-translation contact loss: activation blending is a documented mitigation, not a solved problem — orthogonal task-space separation remains open.
 - Grasp-establishment heuristic (reflected mass) is not a full impact-aware controller.
 
 ---
 
-# XI. Conclusion and Future Work
+# XII. Conclusion and Future Work
 
-- Summary: QP-based dual-arm squeeze allocation + motion-adaptive demand term, validated on dual xArm7.
+- Summary: QP-based dual-arm squeeze allocation + motion-adaptive demand term + joint-torque-capacity-aware extension, validated on dual xArm7.
 - Future work:
   - Closed-loop, motion-estimated demand as primary (not fallback) formulation.
-  - Orthogonal task-space separation to resolve the lateral-translation coupling failure (§VII-C) as a principled replacement for the activation-blend stopgap.
+  - State-driven $\gamma_L,\gamma_R$ (manipulability, torque headroom, or thermal signal) replacing fixed tuned weights.
+  - Orthogonal task-space separation to resolve the lateral-translation coupling failure (§VIII-C) as a principled replacement for the activation-blend stopgap.
   - Exact/SOCP friction handling if real-time budget allows.
-  - Completing the impact-aware grasp establishment as a follow-up paper, engaging directly with the reference-spreading / impact-aware QP literature (§II-E).
+  - Completing the impact-aware grasp establishment as a follow-up paper, engaging directly with the reference-spreading / impact-aware QP literature (§II-F).
 
 ---
 
@@ -261,6 +305,10 @@
 - Nature Machine Intelligence (2025) — trajectory modulation vs. grip-force modulation for slip control.
 - Human hand-acceleration modulation study for slip prevention (2024).
 - Reactive slip control via internal-force optimization for multifingered hands (2026 arXiv).
+
+**Joint-space capacity-aware allocation**
+- Classical minimum-norm / weighted-pseudoinverse torque allocation for redundant/multi-arm systems.
+- Whole-body / multi-contact QP controllers with torque- or actuation-margin-aware cost terms (locomotion / multi-contact force-distribution literature).
 
 **Contact-state transition / hybrid position-force control**
 - Raibert, M.H., Craig, J.J. (1981) — classical orthogonal position/force subspace hybrid control.

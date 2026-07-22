@@ -1,5 +1,6 @@
 #include "DualArmQPOptimizer.h"
 #include <algorithm>
+#include <cmath>
 
 DualArmQPOptimizer::DualArmQPOptimizer() 
 {
@@ -12,6 +13,7 @@ std::pair<Eigen::Matrix2d, Eigen::Vector2d> DualArmQPOptimizer::buildQPProblem(
     const Eigen::Matrix<double, 12, 12>& Pint,
     const Eigen::Matrix<double, 12, 2>& S_n, 
     const Eigen::Matrix<double, 12, 1>& w_fixed,
+    const InputData& input,
     const Params& params) 
 {
     // 1. Mapping Vector c: c^T = n_squeeze^T * Pint * S_n
@@ -34,27 +36,153 @@ std::pair<Eigen::Matrix2d, Eigen::Vector2d> DualArmQPOptimizer::buildQPProblem(
     // 5. Costruzione del vettore gradiente g (2x1)
     Eigen::Vector2d g = 2.0 * params.alpha * lambda0 * c;
 
+    // 6. Joint-Space Capacity-Aware Torque Minimization Penalty
+    Eigen::Matrix<double, 6, 1> S_n_L = S_n.block<6,1>(0, 0);
+    Eigen::Matrix<double, 6, 1> S_n_R = S_n.block<6,1>(6, 1);
+
+    Eigen::Matrix<double, 6, 1> w_fixed_L = w_fixed.head<6>();
+    Eigen::Matrix<double, 6, 1> w_fixed_R = w_fixed.tail<6>();
+
+    Eigen::VectorXd b_L = Eigen::VectorXd::Zero(input.J_L.cols());
+    Eigen::VectorXd b_R = Eigen::VectorXd::Zero(input.J_R.cols());
+    Eigen::VectorXd tau_fixed_L = Eigen::VectorXd::Zero(input.J_L.cols());
+    Eigen::VectorXd tau_fixed_R = Eigen::VectorXd::Zero(input.J_R.cols());
+
+    double b_L_norm_sq = 0.0;
+    double b_R_norm_sq = 0.0;
+    double tau_fixed_L_dot_b_L = 0.0;
+    double tau_fixed_R_dot_b_R = 0.0;
+
+    if (input.J_L.cols() > 0 && input.J_L.rows() == 6) {
+        b_L = input.J_L.transpose() * S_n_L;
+        tau_fixed_L = input.J_L.transpose() * w_fixed_L;
+        b_L_norm_sq = b_L.squaredNorm();
+        tau_fixed_L_dot_b_L = tau_fixed_L.dot(b_L);
+    }
+    if (input.J_R.cols() > 0 && input.J_R.rows() == 6) {
+        b_R = input.J_R.transpose() * S_n_R;
+        tau_fixed_R = input.J_R.transpose() * w_fixed_R;
+        b_R_norm_sq = b_R.squaredNorm();
+        tau_fixed_R_dot_b_R = tau_fixed_R.dot(b_R);
+    }
+
+    Eigen::Matrix2d H_tau = Eigen::Matrix2d::Zero();
+    H_tau(0, 0) = 2.0 * params.gamma_L * b_L_norm_sq;
+    H_tau(1, 1) = 2.0 * params.gamma_R * b_R_norm_sq;
+
+    Eigen::Vector2d g_tau = Eigen::Vector2d::Zero();
+    g_tau(0) = 2.0 * params.gamma_L * tau_fixed_L_dot_b_L;
+    g_tau(1) = 2.0 * params.gamma_R * tau_fixed_R_dot_b_R;
+
+    H += H_tau;
+    g += g_tau;
+
     return {H, g};
 }
 
 std::pair<Eigen::Vector2d, Eigen::Vector2d> DualArmQPOptimizer::computeBounds(
-    const Eigen::Vector3d& fL, 
-    const Eigen::Vector3d& fR, 
-    double F_demand,
+    const InputData& input,
+    const Eigen::Matrix<double, 12, 2>& S_n,
+    const Eigen::Matrix<double, 12, 1>& w_fixed,
     const Params& params) 
 {
-    double FtL = fL.head<2>().norm();
-    double FtR = fR.head<2>().norm();
+    double FtL = input.left_local_force.head<2>().norm();
+    double FtR = input.right_local_force.head<2>().norm();
 
-    double Fmin_L = std::min(-std::abs(FtL / params.mu), params.F_static - F_demand);
-    double Fmin_R = std::min(-std::abs(FtR / params.mu), params.F_static - F_demand);
+    double Fmin_L = std::min(-std::abs(FtL / params.mu), params.F_static - input.F_demand);
+    double Fmin_R = std::min(-std::abs(FtR / params.mu), params.F_static - input.F_demand);
+
+    double F_joint_min_L = -80.0;
+    double F_joint_max_L = 0.0;
+    double F_joint_min_R = -80.0;
+    double F_joint_max_R = 0.0;
+
+    if (params.enable_joint_limits) {
+        // Left arm limits mapping
+        if (input.J_L.cols() > 0 && input.tau_max_L.size() == input.J_L.cols()) {
+            Eigen::Matrix<double, 6, 1> S_n_L = S_n.block<6,1>(0, 0);
+            Eigen::VectorXd b_L = input.J_L.transpose() * S_n_L;
+            Eigen::Matrix<double, 6, 1> w_fixed_L = w_fixed.head<6>();
+            Eigen::VectorXd tau_fixed_L = input.J_L.transpose() * w_fixed_L;
+
+            for (int j = 0; j < b_L.size(); ++j) {
+                double bij = b_L(j);
+                if (std::abs(bij) > 1e-6) {
+                    double t_max = input.tau_max_L(j);
+                    double t_min = -t_max;
+                    double L_j = t_min - tau_fixed_L(j);
+                    double U_j = t_max - tau_fixed_L(j);
+
+                    double b_min, b_max;
+                    if (bij > 0.0) {
+                        b_min = L_j / bij;
+                        b_max = U_j / bij;
+                    } else {
+                        b_min = U_j / bij;
+                        b_max = L_j / bij;
+                    }
+                    F_joint_min_L = std::max(F_joint_min_L, b_min);
+                    F_joint_max_L = std::min(F_joint_max_L, b_max);
+                }
+            }
+        }
+
+        // Right arm limits mapping
+        if (input.J_R.cols() > 0 && input.tau_max_R.size() == input.J_R.cols()) {
+            Eigen::Matrix<double, 6, 1> S_n_R = S_n.block<6,1>(6, 1);
+            Eigen::VectorXd b_R = input.J_R.transpose() * S_n_R;
+            Eigen::Matrix<double, 6, 1> w_fixed_R = w_fixed.tail<6>();
+            Eigen::VectorXd tau_fixed_R = input.J_R.transpose() * w_fixed_R;
+
+            for (int j = 0; j < b_R.size(); ++j) {
+                double bij = b_R(j);
+                if (std::abs(bij) > 1e-6) {
+                    double t_max = input.tau_max_R(j);
+                    double t_min = -t_max;
+                    double L_j = t_min - tau_fixed_R(j);
+                    double U_j = t_max - tau_fixed_R(j);
+
+                    double b_min, b_max;
+                    if (bij > 0.0) {
+                        b_min = L_j / bij;
+                        b_max = U_j / bij;
+                    } else {
+                        b_min = U_j / bij;
+                        b_max = L_j / bij;
+                    }
+                    F_joint_min_R = std::max(F_joint_min_R, b_min);
+                    F_joint_max_R = std::min(F_joint_max_R, b_max);
+                }
+            }
+        }
+    }
+
+    double xu_L = Fmin_L;
+    double xu_R = Fmin_R;
+    if (params.enable_joint_limits) {
+        xu_L = std::min(xu_L, F_joint_max_L);
+        xu_R = std::min(xu_R, F_joint_max_R);
+    }
 
     Eigen::Vector2d xl(-80.0, -80.0);
-    Eigen::Vector2d xu(Fmin_L, Fmin_R);
+    if (params.enable_joint_limits) {
+        xl(0) = std::max(xl(0), F_joint_min_L);
+        xl(1) = std::max(xl(1), F_joint_min_R);
+    }
+
+    // Sanity checks to prevent crossed bounds
+    if (xl(0) > xu_L) {
+        xl(0) = xu_L;
+    }
+    if (xl(1) > xu_R) {
+        xl(1) = xu_R;
+    }
+
+    Eigen::Vector2d xu(xu_L, xu_R);
     return {xl, xu};
 }
 
-bool DualArmQPOptimizer::optimize(const InputData& input,const Params& params, Eigen::Matrix<double, 12, 1>& out_f_input)
+bool DualArmQPOptimizer::optimize(const InputData& input, const Params& params, Eigen::Matrix<double, 12, 1>& out_f_input)
 {
     // 1. Calcolo S_n (World Frame Normal Directions)
     Eigen::Vector3d u_L_world = input.RL * Eigen::Vector3d(0.0, 0.0, 1.0);
@@ -81,10 +209,10 @@ bool DualArmQPOptimizer::optimize(const InputData& input,const Params& params, E
     Eigen::Matrix<double, 12, 1> w_fixed = input.f_meas - S_n * x_meas;
 
     // 4. CHIAMATA AL METODO ISOLATO PER COSTRUIRE IL QP
-    auto [H, g] = buildQPProblem(n_squeeze, input.Pint, S_n, w_fixed, params);
+    auto [H, g] = buildQPProblem(n_squeeze, input.Pint, S_n, w_fixed, input, params);
 
     // 5. CHIAMATA AL METODO ISOLATO PER I BOUNDS
-    auto [xl, xu] = computeBounds(input.left_local_force, input.right_local_force, input.F_demand,params);
+    auto [xl, xu] = computeBounds(input, S_n, w_fixed, params);
 
     // 6. Soluzione del problema con QD
     Eigen::MatrixXd Aeq(0, 2), Aineq(0, 2);

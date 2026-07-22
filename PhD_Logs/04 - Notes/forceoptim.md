@@ -52,7 +52,7 @@ $$ F_{demand} = k \cdot a_{demand}  $$
 ### friction
 we take the force $$F_{Friction,L}$$ and $$F_{Friction,R}$$ that respect this constraints
 $$ ||F_{t,L}|| \leq \mu_L F_{n,L}  $$
-$$  ||F_{t,R}|| \leq \mu_L F_{n,R} $$
+$$  ||F_{t,R}|| \leq \mu_R F_{n,R} $$
 
 
 
@@ -265,3 +265,82 @@ $$
 {\begin{aligned} \mathbf{H} &= 2 \begin{bmatrix} \alpha c_L^2 + \beta & \alpha c_L c_R - \beta \\ \alpha c_L c_R - \beta & \alpha c_R^2 + \beta \end{bmatrix} \\ 
 \mathbf{g} &= 2 \alpha \lambda_0 \begin{bmatrix} c_L \\ c_R \end{bmatrix} \end{aligned}}
 $$
+
+# Joint-Space Capacity-Aware Force Allocation
+
+To elevate the standard end-effector force allocation to be joint-space capacity-aware, we extend the QP to directly penalize the joint torques required to generate the contact forces. This ensures the optimizer favors force distributions that keep the joint torques small (i.e. protecting weak actuators or joints near singular configurations).
+
+## 1. Mapping Contact Wrenches to Joint Torques
+The relation between end-effector contact wrenches $w_L, w_R \in \mathbb{R}^6$ (forces and moments) and the joint torques $\tau_L \in \mathbb{R}^{n_L}, \tau_R \in \mathbb{R}^{n_R}$ (where $n_L, n_R$ are the number of joints of each arm, e.g., 7 for xArm7) is given by the arm Jacobians $J_L \in \mathbb{R}^{6 \times n_L}$ and $J_R \in \mathbb{R}^{6 \times n_R}$:
+
+$$\tau_L = J_L^T w_L$$
+$$\tau_R = J_R^T w_R$$
+
+## 2. Expressing Joint Torques as Affine Functions of $x$
+Recall that the total 12D wrench vector $w = \begin{bmatrix} w_L \\ w_R \end{bmatrix}$ is decomposed into:
+
+$$w = w_{\text{fixed}} + S_n x$$
+
+We can segment $w_{\text{fixed}}$ and $S_n$ into left and right arm blocks:
+
+$$w_{\text{fixed}} = \begin{bmatrix} w_{\text{fixed},L} \\ w_{\text{fixed},R} \end{bmatrix}, \quad S_n = \begin{bmatrix} S_{n,L} & 0_{6 \times 1} \\ 0_{6 \times 1} & S_{n,R} \end{bmatrix}$$
+
+Where:
+- $w_{\text{fixed},i} \in \mathbb{R}^6$ is the measured/fixed wrench (moments and tangential forces) on arm $i$.
+- $S_{n,i} = \begin{bmatrix} 0_{3 \times 1} \\ \hat{u}_i \end{bmatrix} \in \mathbb{R}^{6 \times 1}$ maps the scalar normal force $F_{n,i}$ to its 6D wrench on arm $i$.
+
+Thus:
+$$w_L = w_{\text{fixed},L} + S_{n,L} F_{n,L}$$
+$$w_R = w_{\text{fixed},R} + S_{n,R} F_{n,R}$$
+
+Substituting these back into the torque mappings, we obtain the joint torques as affine functions of the decision variables $F_{n,L}$ and $F_{n,R}$:
+
+$$\tau_L(F_{n,L}) = \tau_{fixed,L} + b_L F_{n,L}$$
+$$\tau_R(F_{n,R}) = \tau_{fixed,R} + b_R F_{n,R}$$
+
+Where:
+- $\tau_{fixed,i} = J_i^T w_{\text{fixed},i} \in \mathbb{R}^{n_i}$ is the joint torque vector from the fixed end-effector components (gravity, payload, friction).
+- $b_i = J_i^T S_{n,i} \in \mathbb{R}^{n_i}$ is the torque contribution vector per unit normal force.
+
+## 3. Formulating the Joint Torque Minimization Penalty
+We add a weighted joint torque norm term to the primary cost function:
+
+$$J_{torque}(x) = \gamma_L \|\tau_L(F_{n,L})\|^2 + \gamma_R \|\tau_R(F_{n,R})\|^2$$
+
+Where $\gamma_L, \gamma_R \geq 0$ are the torque optimization weights. Expanding each term:
+
+$$\|\tau_i(F_{n,i})\|^2 = (\tau_{fixed,i} + b_i F_{n,i})^T (\tau_{fixed,i} + b_i F_{n,i}) = (b_i^T b_i) F_{n,i}^2 + (2 \tau_{fixed,i}^T b_i) F_{n,i} + \tau_{fixed,i}^T \tau_{fixed,i}$$
+
+Using vector form $x = \begin{bmatrix} F_{n,L} \\ F_{n,R} \end{bmatrix}$, the total torque cost (ignoring the constant $\tau_{fixed,i}^T \tau_{fixed,i}$ term) is:
+
+$$J_{torque}(x) = \frac{1}{2} x^T H_{\tau} x + g_{\tau}^T x$$
+
+Where the Hessian contribution $H_{\tau} \in \mathbb{R}^{2 \times 2}$ is diagonal:
+
+$$H_{\tau} = 2 \begin{bmatrix} \gamma_L (b_L^T b_L) & 0 \\ 0 & \gamma_R (b_R^T b_R) \end{bmatrix}$$
+
+And the gradient contribution $g_{\tau} \in \mathbb{R}^2$ is:
+
+$$g_{\tau} = 2 \begin{bmatrix} \gamma_L (\tau_{fixed,L}^T b_L) \\ \gamma_R (\tau_{fixed,R}^T b_R) \end{bmatrix}$$
+
+## 4. Incorporating Joint Torque Limits into Bounds (Capacity-Aware Bounds)
+To enforce physical joint torque limits $\tau_{min,i} \leq \tau_i \leq \tau_{max,i}$ directly in the 2D QP, we project the joint torque inequalities onto the decision variables.
+
+For each joint $j \in \{1, \dots, n_i\}$ of arm $i \in \{L, R\}$:
+
+$$\tau_{min,i,j} \leq \tau_{fixed,i,j} + b_{i,j} F_{n,i} \leq \tau_{max,i,j}$$
+
+This yields linear bounds on $F_{n,i}$ depending on the sign of the joint sensitivity coefficient $b_{i,j}$:
+
+1. If $b_{i,j} > 0$:
+   $$\frac{\tau_{min,i,j} - \tau_{fixed,i,j}}{b_{i,j}} \leq F_{n,i} \leq \frac{\tau_{max,i,j} - \tau_{fixed,i,j}}{b_{i,j}}$$
+
+2. If $b_{i,j} < 0$:
+   $$\frac{\tau_{max,i,j} - \tau_{fixed,i,j}}{b_{i,j}} \leq F_{n,i} \leq \frac{\tau_{min,i,j} - \tau_{fixed,i,j}}{b_{i,j}}$$
+
+By checking these conditions for all joints across both arms, we compute dynamic joint-capacity bounds $[F_{joint\_min,i}, F_{joint\_max,i}]$ and intersect them with the friction/positivity bounds $xl$ and $xu$:
+
+$$xl_i = \max(xl_i, F_{joint\_min,i})$$
+$$xu_i = \min(xu_i, F_{joint\_max,i})$$
+
+This formulation keeps the QP extremely fast (2 variables), guarantees that joint-space torque limits are respected in real time, and optimizes joint-space energy efficiency.
