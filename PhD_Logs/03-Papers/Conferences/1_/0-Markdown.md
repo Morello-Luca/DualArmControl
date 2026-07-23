@@ -11,7 +11,6 @@
 - We couple the minimal grasp-force bound to the *motion state* of the manipulation task ("task-on-demand"), so the safety margin grows only while the object is in transit and relaxes at rest.
 - We extend the same QP, at no extra decision-variable cost, with a joint-torque-aware penalty that biases squeeze-force allocation toward the arm with more actuation margin.
 - We report internal force tracking error, friction-margin utilization, and squeeze effort with vs. without the motion-adaptive term, and with vs. without the joint-torque-aware penalty.
-- We identify a coupling failure mode during lateral translation (impedance spring force and motion direction opposing each other, causing contact loss) and describe a stopgap (activation-blended stiffness/wrench-gain switching) plus the target long-term fix (orthogonal task-space separation).
 
 ---
 
@@ -87,11 +86,7 @@
 - FSM: `Idle → Independent (reach) → Collaborative { Build-Grasp → Trajectory → Cooperative Motion }`.
 - One system-diagram figure.
 
-## III-B. Sensing and Signal Conditioning
-- Measured wrenches per arm (`ImpedanceTask::measuredWrench()`), rotated to world frame.
-- Filtering stage: α-β filter(s) for internal force tracking, low-pass alternatives — state which filter is used in the final version (trim the multi-filter scratchpad to one justified choice, or present as a short ablation).
-
-## III-C. Problem Statement
+## III-B. Problem Statement
 - At every control cycle, find per-arm normal (squeeze) forces `x = [F_{n,L}, F_{n,R}]^T` that:
   - track a desired internal grasp force level,
   - respect friction-derived and actuation bounds,
