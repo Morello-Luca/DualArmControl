@@ -70,14 +70,39 @@ ToDo \cite{uchiyama1988symmetric}
     \item No existing framework couples: (a) nullspace-based internal/external wrench decomposition, (b) real-time QP allocation of squeeze force between two arms, and (c) a motion-derived force demand that is proactive (scheduled/estimated from the task's motion state) rather than reactive (slip-triggered).
     \item Joint-space actuation capacity (torque headroom, proximity to singularity/thermal limits) is not typically fed back into a real-time end-effector-level force allocator, despite the wrench-to-torque map being affine and cheap to exploit.
 \end{itemize}
+
+\subsection*{What to prove}
+\begin{itemize}
+    \item goal of this paper is: adaptively allocating dual-arm squeeze (normal) forces based on the object’s motion can significantly improve efficiency and safety compared to a fixed safety margin.
+    \item prove that coupling the minimal grasp force to the motion state (a “task-on-demand” safety margin) will reduce wasted actuation effort (and thus energy/power) without compromising slip stability.
+    \item demonstrate that biasing the force allocation toward the arm with more joint torque capacity further improves overall performance
+    \item \textbf{Motion-adaptive grip force reduces effort}
+    \begin{itemize}
+        \item  We hypothesize that tying the minimum grasp force to object velocity (instead of a constant margin) will *lower the average commanded squeeze force* and the total actuator work
+        \item directly inspired by human grip behavior
+        \item Likewise, adaptive grasp designs can hold objects securely with much lower forces By analogy, our motion-driven scheme should yield noticeably lower total squeeze force (hence lower power draw) than a constant-margin controller, especially when the object is at rest. 
+    \end{itemize}
+    \item \textbf{Slip safety is maintained when needed}
+        \begin{itemize}
+            \item Even though we reduce unnecessary force at rest, we expect the *dynamic slip margin* to remain safe during motion
+        \end{itemize}
+
+    \item \textbf{Balanced load and torque awareness}
+        \begin{itemize}
+            \item Our QP also enforces balanced force distribution (penalizing one arm doing all the work) and can include a joint-torque cost.
+            \item We hypothesize that adding the torque-aware quadratic terms will shift squeeze effort onto the arm with more actuation headroom.
+            This should *increase each arm’s torque margin* (distance to its limits) relative to a force-unaware allocation.
+        \end{itemize}
+\end{itemize}
+
 \subsection*{Contributions}
 \begin{itemize}
-    \item A QP formulation for real-time squeeze-force allocation between two cooperating arms with friction-aware bounds.
-    \item A motion-adaptive minimal-force term ("task-on-demand") that couples the desired grasp-force floor to the object's motion state, contrasted with a constant-safety-margin baseline.
-    \item A joint-torque-capacity-aware extension of the same QP that biases allocation toward the arm with more actuation margin, added as a quadratic term with no increase in problem size or solver cost.
-    \item Identification and a first mitigation (activation-blended gain switching) for a coupling failure mode between impedance stiffness and wrench gain during lateral translation.
-    \item Validation on a dual xArm7 platform (mc\_rtc).
+    \item a two-variable QP can allocate normal forces to both arms in real time while enforcing friction and actuation bounds
+    \item making the safety floor velocity-dependent (task-on-demand) measurably reduces overall effort
+    \item adding a small torque-penalty reshapes the force split to protect the arm with tighter joint capacity
+    \item We will contrast each element against simpler baselines (e.g. fixed safety margin, no torque cost) and show the improvements in clear metrics.  
 \end{itemize}
+
 
 \section*{Related Work}
 
@@ -528,15 +553,10 @@ ToDo \cite{uchiyama1988symmetric}
 
 \begin{itemize}
     \item FSM / system diagram.
-
     \item Internal force vs. trajectory phase, with all demand conditions overlaid.
-
     \item Friction-margin utilization over the trajectory.
-
     \item Joint torque per arm, with vs. without torque-aware weighting, under an induced asymmetric-capacity scenario.
-
     \item Contact-loss / activation-blend before-after comparison.
-
     \item Solve-time histogram.
 \end{itemize}
 
