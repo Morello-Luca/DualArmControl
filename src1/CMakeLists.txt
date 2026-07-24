@@ -6,12 +6,11 @@ set(controller_SRC
   DualArmControlGrasp.cpp
   DualArmControlLogging.cpp
   DualArmControlImpact.cpp
-  ContactForceQP.cpp
+  DualArmQPOptimizer.cpp
 )
 
 set(controller_HDR
   DualArmControl.h
-  ContactForceQP.h
 )
 
 add_controller(${PROJECT_NAME} ${controller_SRC} ${controller_HDR})

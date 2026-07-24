@@ -7,7 +7,7 @@
 #include <mc_solver/BoundedSpeedConstr.h>
 #include <RBDyn/FD.h>
 #include <eigen-qld/QLD.h>
-#include "ContactForceQP.h"
+#include "DualArmQPOptimizer.h"
 
 
 struct GraspFrame
@@ -383,7 +383,4 @@ double alpha(double e, double L,double k = 1);
 
 double beta(double spring, double initial_value, double final_value);
 
-
-
-Eigen::MatrixXd computeJacobian(unsigned int robotIndex, const std::string & eeName) const;
 };

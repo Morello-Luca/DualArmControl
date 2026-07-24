@@ -33,7 +33,9 @@ double DualArmControl::computeReflectedMassZ(unsigned int robotIndex,
   const Eigen::MatrixXd M = fd.H();
 
   // Jacobian
-const Eigen::MatrixXd J = computeJacobian(robotIndex, eeName).bottomRows<3>();
+  rbd::Jacobian jac(robot.mb(), eeName);
+  const Eigen::MatrixXd J =
+      jac.jacobian(robot.mb(), robot.mbc()).bottomRows<3>();
 
   // M^{-1}
   const Eigen::MatrixXd M_inv =
@@ -45,12 +47,4 @@ const Eigen::MatrixXd J = computeJacobian(robotIndex, eeName).bottomRows<3>();
 
   // Reflected mass along Z
   return 1.0 / LambdaInv(2, 2);
-}
-
-
-Eigen::MatrixXd DualArmControl::computeJacobian(unsigned int robotIndex,
-                                                const std::string & eeName) const{
-  const auto & robot = robots().robot(robotIndex);
-  rbd::Jacobian jac(robot.mb(), eeName);
-  return jac.jacobian(robot.mb(), robot.mbc());
 }

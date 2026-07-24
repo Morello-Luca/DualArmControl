@@ -75,23 +75,15 @@ void DualArmControl::currentInternalForce(){
 }
 
 
-double DualArmControl::DemandForces(double K) const{ 
-       // 1. Get spatial velocity vectors (sva::MotionVecd) in World Frame
-       const auto & vel_L_sva = robot().bodyVelW(eeName_);
-       const auto & vel_R_sva = robot().bodyVelW(eeName_);
-
-       // 2. Extract linear velocities (Vector3d)
-       Eigen::Vector3d v_left = vel_L_sva.linear();
-       Eigen::Vector3d v_right = vel_R_sva.linear();
-
-       // 3. Compute object center linear velocity
-       Eigen::Vector3d v_obj = 0.5 * (v_left + v_right);
-
-       // 5. Get scalar magnitude for force demand
-       double v_mag = v_obj.norm();
-
-    return K * v_mag;
+// theorical peak 10/sqrt3 ≈ 5.7735.pre gain
+double DualArmControl::DemandForces(double K) const{
+    const double t2 = t_norm * t_norm;
+    const double t3 = t2 * t_norm;
+    const double t4 = t3 * t_norm;
+    //return K * std::abs(60.0 * t_norm - 180.0 * t2 + 120.0 * t3);
+    return K * std::abs(30.0 * t2 - 60.0 * t3 + 30.0 * t4);
 }
+
 
 
 void DualArmControl::lowPassWrench(sva::ForceVecd & filtered, const sva::ForceVecd & raw, double alpha) {
@@ -101,9 +93,7 @@ void DualArmControl::lowPassWrench(sva::ForceVecd & filtered, const sva::ForceVe
 }
 
 
-
 void DualArmControl::optimize() {
-       currentInternalForce();
     // 0. Lettura sensori e filtraggio
     double tau = 1.0 / (2.0 * M_PI * gains.cutoffPeriod);
     double alpha_lpcut = timeStep / (tau + timeStep);
@@ -115,12 +105,13 @@ void DualArmControl::optimize() {
     qpParams.alpha    = 1.0; 
     qpParams.beta     = 0.5;
     qpParams.mu       = 0.5;              // Preso dinamicamente da mc_rtc o dal tuo robot
-    qpParams.F_static = -10;              // Preso dinamicamente
-    double K_demand = 10.0;
+    qpParams.F_static = -15;              // Preso dinamicamente
+    qpParams.K_demand = 8.0;
 
-    qpParams.gamma_L = 0.0;              // Se > 0, penalizza la norma delle coppie del braccio sinistro
-    qpParams.gamma_R = 0.0;              // Se > 0, penalizza la norma delle coppie del braccio destro
-   
+    // Parametri per la minimizzazione della coppia nello spazio dei giunti (opzionali, decommentabili per attivarli)
+    qpParams.gamma_L = 0.01;              // Se > 0, penalizza la norma delle coppie del braccio sinistro
+    qpParams.gamma_R = 0.01;              // Se > 0, penalizza la norma delle coppie del braccio destro
+    qpParams.enable_joint_limits = true;  // Abilita i limiti fisici di coppia dei giunti nella QP
 
     // 2. Preparazione Dati di Input per il QP
     DualArmQPOptimizer::InputData qpInput;
@@ -135,11 +126,14 @@ void DualArmControl::optimize() {
     qpInput.Pint = Eigen::Matrix<double, 12, 12>::Identity() - Gpinv_ * G_;
     qpInput.left_local_force = WL_filtered_.force();
     qpInput.right_local_force = WR_filtered_.force();
-    qpInput.F_demand = DemandForces(K_demand); // K_demand = 10.0
+    qpInput.F_demand = DemandForces(10.0); // K_demand = 10.0
 
-    qpInput.J_L = computeJacobian(leftRobotIndex_ , eeName_);
-    qpInput.J_R = computeJacobian(rightRobotIndex_, eeName_);
-
+    // Popolamento dei parametri dello spazio dei giunti per la capacità di coppia
+    // Assegna qui i Jacobiani calcolati e i limiti se abilitati:
+    // qpInput.J_L = ... (MatrixXd 6 x n_L)
+    // qpInput.J_R = ... (MatrixXd 6 x n_R)
+    // qpInput.tau_max_L = ... (VectorXd n_L)
+    // qpInput.tau_max_R = ... (VectorXd n_R)
 
     // 3. Chiamata all'Ottimizzatore Isolato
     Eigen::Matrix<double, 12, 1> f_input;

@@ -36,17 +36,27 @@ std::pair<Eigen::Matrix2d, Eigen::Vector2d> DualArmQPOptimizer::buildQPProblem(
     // 5. Costruzione del vettore gradiente g (2x1)
     Eigen::Vector2d g = 2.0 * params.alpha * lambda0 * c;
 
-    // 6. Joint-Space Capacity-Aware Torque Minimization Penalty
-    Eigen::Matrix<double, 6, 1> S_n_L = S_n.block<6,1>(0, 0);
-    Eigen::Matrix<double, 6, 1> S_n_R = S_n.block<6,1>(6, 1);
 
-    Eigen::Matrix<double, 6, 1> w_fixed_L = w_fixed.head<6>();
-    Eigen::Matrix<double, 6, 1> w_fixed_R = w_fixed.tail<6>();
 
-    Eigen::VectorXd b_L = Eigen::VectorXd::Zero(input.J_L.cols());
-    Eigen::VectorXd b_R = Eigen::VectorXd::Zero(input.J_R.cols());
-    Eigen::VectorXd tau_fixed_L = Eigen::VectorXd::Zero(input.J_L.cols());
-    Eigen::VectorXd tau_fixed_R = Eigen::VectorXd::Zero(input.J_R.cols());
+
+    // =========================================================================
+    // COST FUNCTION EXTENSION -> JOINT-SPACE CAPACITY-AWARE TORQUE MINIMIZATION
+    // =========================================================================
+    
+    // 1. MAP END EFFECTOR WRENCHES INTO JOINTS TORQUE BY JACOBIAN 
+    // WE HAVE NORMAL FORCES (OPTIMIZATION VARIABLES) AND THE "REST"
+        // 1.1 WE SEPARATE THE CONTRIBUTION FIRST
+        Eigen::Matrix<double, 6, 1> S_n_L = S_n.block<6,1>(0, 0);
+        Eigen::Matrix<double, 6, 1> S_n_R = S_n.block<6,1>(6, 1);
+
+        Eigen::Matrix<double, 6, 1> w_fixed_L = w_fixed.head<6>();
+        Eigen::Matrix<double, 6, 1> w_fixed_R = w_fixed.tail<6>();
+
+        Eigen::VectorXd b_L = Eigen::VectorXd::Zero(input.J_L.cols());
+        Eigen::VectorXd b_R = Eigen::VectorXd::Zero(input.J_R.cols());
+        
+        Eigen::VectorXd tau_fixed_L = Eigen::VectorXd::Zero(input.J_L.cols());
+        Eigen::VectorXd tau_fixed_R = Eigen::VectorXd::Zero(input.J_R.cols());
 
     double b_L_norm_sq = 0.0;
     double b_R_norm_sq = 0.0;
@@ -156,6 +166,11 @@ std::pair<Eigen::Vector2d, Eigen::Vector2d> DualArmQPOptimizer::computeBounds(
             }
         }
     }
+
+
+
+
+
 
     double xu_L = Fmin_L;
     double xu_R = Fmin_R;
