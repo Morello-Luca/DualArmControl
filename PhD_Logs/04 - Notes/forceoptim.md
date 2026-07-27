@@ -344,3 +344,611 @@ $$xl_i = \max(xl_i, F_{joint\_min,i})$$
 $$xu_i = \min(xu_i, F_{joint\_max,i})$$
 
 This formulation keeps the QP extremely fast (2 variables), guarantees that joint-space torque limits are respected in real time, and optimizes joint-space energy efficiency.
+
+
+
+# 26-06
+# Controllo di Forza Cooperativo Dual-Arm — Formulazione Finale con Margine di Sicurezza Dinamico
+
+## 0. Notazione
+
+| Simbolo | Significato |
+|---|---|
+| $x_L, x_R \in \mathbb{R}$ | Forze normali di contatto ai due end-effector (variabili di ottimizzazione, negative = compressione) |
+| $F_{t,L}, F_{t,R}$ | Componenti tangenziali della forza misurata dai sensori F/T ai polsi |
+| $\mu$ | Coefficiente di attrito statico |
+| $\delta$ | Margine di sicurezza sul modello d'attrito (costante piccola, incertezza di $\mu$) |
+| $x_u^L, x_u^R$ | Limite superiore di compressione per braccio (bound rigido, da attrito) |
+| $SM_{target}$ | Margine di sicurezza desiderato **sopra** il minimo fisico (parametro di design, costante) |
+| $c_L, c_R$ | Coefficienti di proiezione dello squeeze (dalla proiezione $n_{squeeze}^T P_{int} S_n$, invariati rispetto alla tua formulazione originale) |
+| $\alpha, \beta, \gamma_L, \gamma_R$ | Pesi della funzione di costo |
+| $\tau_L(x_L), \tau_R(x_R)$ | Coppie ai giunti generate dalle forze di contatto |
+
+---
+
+## Passo 1 — Vincolo fisico rigido (limite di Coulomb)
+
+Il minimo di compressione necessario per non far scivolare l'oggetto **resta un vincolo rigido**, non negoziabile, calcolato dalla forza tangenziale *misurata* (nessuna derivata numerica, nessun rumore aggiunto):
+
+$$
+x_u^L = -\frac{|F_{t,L}|}{\mu} - \delta, \qquad x_u^R = -\frac{|F_{t,R}|}{\mu} - \delta
+$$
+
+Vincoli box del QP:
+$$
+x_l \le x_L \le x_u^L, \qquad x_l \le x_R \le x_u^R
+$$
+
+**Perché è rigido e non nel costo:** è una condizione di sicurezza assoluta (non-scivolamento). Non deve mai essere violata, quindi va nei bound del QP, non in un termine soft che potrebbe essere "battuto" da un altro termine.
+
+---
+
+## Passo 2 — Margine di sicurezza dinamico (il concetto chiave)
+
+**Errore della versione precedente:** il termine di squeeze puntava a $0$ (forza interna nulla). Poiché il vincolo del Passo 1 impone comunque una compressione minima, l'ottimizzatore finiva sempre schiacciato sul bound — rendendo $\gamma_L,\gamma_R$ ininfluenti (paradosso descritto nell'analisi iniziale).
+
+**Correzione:** il termine di squeeze non deve puntare al bound stesso ($x_u$), ma a un punto **oltre** il bound, a distanza $SM_{target}$:
+
+$$
+x_{ref} = x_u - SM_{target}
+$$
+
+> ⚠️ **Nota sul segno.** $x_u$ è negativo (compressione). "Aumentare il margine di sicurezza" significa comprimere *di più*, cioè andare *più negativo*. Quindi $SM_{target} > 0$ va **sottratto** a $x_u$ per ottenere un riferimento più negativo di $x_u$. Verificare numericamente prima del deploy: es. $x_u = -10\,N$, $SM_{target}=5\,N$ → $x_{ref} = -15\,N$ (più compressione, corretto).
+
+Poiché il tuo QP ha un unico scalare $\lambda_0$ (non un riferimento per braccio separato), serve un solo valore di riferimento a partire da $x_u^L, x_u^R$. Due opzioni:
+
+- **Conservativa (consigliata):** $x_u^{ref} = \min(x_u^L, x_u^R)$ — il margine insegue sempre il braccio messo peggio.
+- **Media:** $x_u^{ref} = \frac{1}{2}(x_u^L + x_u^R)$ — più semplice, ma può sottostimare il bisogno del braccio più caricato.
+
+Questo valore **non sostituisce** $c_L, c_R$ (che restano quelli calcolati dalla proiezione fisica e determinano *come* si distribuisce lo sforzo tra i due bracci) — serve solo a definire *quanto* squeeze totale è il target di riferimento.
+
+---
+
+## Passo 3 — Funzione di costo finale
+
+$$
+f(x_L, x_R) = \alpha\big(c_L x_L + c_R x_R + \lambda_0 - x_u^{ref}(t) + SM_{target}\big)^2 \;+\; \beta(x_L - x_R)^2 \;+\; \gamma_L\|\tau_L(x_L)\|^2 \;+\; \gamma_R\|\tau_R(x_R)\|^2
+$$
+
+soggetta a:
+$$
+x_l \le x_L \le x_u^L(t), \qquad x_l \le x_R \le x_u^R(t)
+$$
+
+### Interpretazione termine per termine
+
+1. **Termine di squeeze ($\alpha$):** non spinge più verso zero forza interna, ma verso un punto **a distanza $SM_{target}$ oltre il minimo fisico corrente**. È un target che *si muove* con il carico reale (via $x_u^{ref}(t)$, aggiornato ogni ciclo da $F_t$ misurato), invece di essere una costante fissa o zero.
+2. **Termine di bilanciamento ($\beta$):** invariato — penalizza differenza di forza tra i due bracci.
+3. **Termine di coppia ($\gamma_L,\gamma_R$):** ora ha davvero un ruolo, perché il vincolo non è più sempre attivo esattamente dove punta anche il termine $\alpha$: il QP ha un margine reale ($SM_{target}$) dentro cui $\gamma$ può spostare la soluzione per scaricare il braccio più stressato.
+
+### Perché "squeeze maggiore dei bound" e non uguale
+
+Il punto centrale della riformulazione: **il target di costo deve stare strettamente oltre il bound, mai esattamente su di esso.** Se il target coincidesse col bound (come accadeva quando puntava a $x_u$ direttamente, o a $0$ con bound sempre attivo), l'ottimizzatore non avrebbe mai un vero grado di libertà: la soluzione sarebbe sempre "sul muro", e qualunque peso ($\gamma$ in particolare) diventerebbe decorativo, esattamente come nel problema originale. Tenendo il target a distanza $SM_{target}>0$ dal bound, si crea uno spazio di manovra reale dentro cui i pesi $\beta, \gamma$ possono effettivamente competere e produrre soluzioni diverse.
+
+---
+
+## Passo 4 — Problema QP in forma canonica
+
+Variabili: $x = [x_L, x_R]^T$
+
+**Hessiana (2×2), invariata nella struttura rispetto alla versione precedente:**
+$$
+H = 2\begin{bmatrix} \alpha c_L^2 + \beta & \alpha c_Lc_R - \beta \\ \alpha c_Lc_R - \beta & \alpha c_R^2 + \beta \end{bmatrix} + H_\tau
+$$
+dove $H_\tau$ è il contributo dei termini $\gamma_L\|\tau_L\|^2, \gamma_R\|\tau_R\|^2$ (invariato, dipende solo da $J_L^TS_{n,L}$, $J_R^TS_{n,R}$).
+
+**Gradiente (2×1):**
+$$
+g = 2\alpha\big(\lambda_0 - x_u^{ref}(t) + SM_{target}\big)\, c + g_\tau
+$$
+dove $c = [c_L, c_R]^T$ e $g_\tau$ è invariato rispetto alla versione precedente.
+
+**Vincoli box, ora time-varying:**
+$$
+x_l \le x \le x_u(t), \qquad x_u(t) = \big[x_u^L(t),\, x_u^R(t)\big]^T
+$$
+
+---
+
+## Passo 5 — Procedura di calcolo, ordine delle operazioni ad ogni ciclo di controllo
+
+1. **Leggi le forze tangenziali misurate** $F_{t,L}, F_{t,R}$ dai sensori F/T (nessuna derivata, nessuna stima di velocità/accelerazione).
+2. **Calcola i bound rigidi** $x_u^L(t), x_u^R(t)$ dal Passo 1.
+3. **Calcola il riferimento scalare** $x_u^{ref}(t)$ (min o media dei due bound, Passo 2).
+4. **Costruisci il termine di offset** $\lambda_0 - x_u^{ref}(t) + SM_{target}$ e aggiornalo nel gradiente $g$.
+5. **Costruisci $H, g$** completi (squeeze + bilanciamento + coppia, invariati nella struttura).
+6. **Risolvi il QP** con i bound $x_u(t)$ appena calcolati.
+7. **Ricostruisci il wrench totale** di output come nella versione precedente.
+
+**Nota sull'ordine:** i bound (passo 2) devono essere calcolati **prima** della costruzione del gradiente (passo 4-5), perché il gradiente dipende da $x_u^{ref}(t)$. Nella pipeline originale l'ordine era invertito (QP costruito prima dei bound); va corretto.
+
+---
+
+## Punti da verificare prima del deploy (checklist)
+
+# Controllo di Forza Cooperativo Dual-Arm — Formulazione Finale con Margine di Sicurezza Dinamico
+
+## 0. Notazione
+
+| Simbolo | Significato |
+|---|---|
+| $x_L, x_R \in \mathbb{R}$ | Forze normali di contatto ai due end-effector (variabili di ottimizzazione, negative = compressione) |
+| $F_{t,L}, F_{t,R}$ | Componenti tangenziali della forza misurata dai sensori F/T ai polsi |
+| $\mu$ | Coefficiente di attrito statico |
+| $\delta$ | Margine di sicurezza sul modello d'attrito (costante piccola, incertezza di $\mu$) |
+| $x_u^L, x_u^R$ | Limite superiore di compressione per braccio (bound rigido, da attrito) |
+| $SM_{target}$ | Margine di sicurezza desiderato **sopra** il minimo fisico (parametro di design, costante) |
+| $c_L, c_R$ | Coefficienti di proiezione dello squeeze (dalla proiezione $n_{squeeze}^T P_{int} S_n$, invariati rispetto alla tua formulazione originale) |
+| $\alpha, \beta, \gamma_L, \gamma_R$ | Pesi della funzione di costo |
+| $\tau_L(x_L), \tau_R(x_R)$ | Coppie ai giunti generate dalle forze di contatto |
+
+---
+
+## Passo 1 — Vincolo fisico rigido (limite di Coulomb)
+
+Il minimo di compressione necessario per non far scivolare l'oggetto **resta un vincolo rigido**, non negoziabile, calcolato dalla forza tangenziale *misurata* (nessuna derivata numerica, nessun rumore aggiunto):
+
+$$
+x_u^L = -\frac{|F_{t,L}|}{\mu} - \delta, \qquad x_u^R = -\frac{|F_{t,R}|}{\mu} - \delta
+$$
+
+Vincoli box del QP:
+$$
+x_l \le x_L \le x_u^L, \qquad x_l \le x_R \le x_u^R
+$$
+
+**Perché è rigido e non nel costo:** è una condizione di sicurezza assoluta (non-scivolamento). Non deve mai essere violata, quindi va nei bound del QP, non in un termine soft che potrebbe essere "battuto" da un altro termine.
+
+---
+
+## Passo 2 — Margine di sicurezza dinamico (il concetto chiave)
+
+**Errore della versione precedente:** il termine di squeeze puntava a $0$ (forza interna nulla). Poiché il vincolo del Passo 1 impone comunque una compressione minima, l'ottimizzatore finiva sempre schiacciato sul bound — rendendo $\gamma_L,\gamma_R$ ininfluenti (paradosso descritto nell'analisi iniziale).
+
+**Correzione:** il termine di squeeze non deve puntare al bound stesso ($x_u$), ma a un punto **oltre** il bound, a distanza $SM_{target}$:
+
+$$
+x_{ref} = x_u - SM_{target}
+$$
+
+> ⚠️ **Nota sul segno.** $x_u$ è negativo (compressione). "Aumentare il margine di sicurezza" significa comprimere *di più*, cioè andare *più negativo*. Quindi $SM_{target} > 0$ va **sottratto** a $x_u$ per ottenere un riferimento più negativo di $x_u$. Verificare numericamente prima del deploy: es. $x_u = -10\,N$, $SM_{target}=5\,N$ → $x_{ref} = -15\,N$ (più compressione, corretto).
+
+Poiché il tuo QP ha un unico scalare $\lambda_0$ (non un riferimento per braccio separato), serve un solo valore di riferimento a partire da $x_u^L, x_u^R$. Due opzioni:
+
+- **Conservativa (consigliata):** $x_u^{ref} = \min(x_u^L, x_u^R)$ — il margine insegue sempre il braccio messo peggio.
+- **Media:** $x_u^{ref} = \frac{1}{2}(x_u^L + x_u^R)$ — più semplice, ma può sottostimare il bisogno del braccio più caricato.
+
+Questo valore **non sostituisce** $c_L, c_R$ (che restano quelli calcolati dalla proiezione fisica e determinano *come* si distribuisce lo sforzo tra i due bracci) — serve solo a definire *quanto* squeeze totale è il target di riferimento.
+
+---
+
+## Passo 3 — Funzione di costo finale
+
+$$
+f(x_L, x_R) = \alpha\big(c_L x_L + c_R x_R + \lambda_0 - x_u^{ref}(t) + SM_{target}\big)^2 \;+\; \beta(x_L - x_R)^2 \;+\; \gamma_L\|\tau_L(x_L)\|^2 \;+\; \gamma_R\|\tau_R(x_R)\|^2
+$$
+
+soggetta a:
+$$
+x_l \le x_L \le x_u^L(t), \qquad x_l \le x_R \le x_u^R(t)
+$$
+
+### Interpretazione termine per termine
+
+1. **Termine di squeeze ($\alpha$):** non spinge più verso zero forza interna, ma verso un punto **a distanza $SM_{target}$ oltre il minimo fisico corrente**. È un target che *si muove* con il carico reale (via $x_u^{ref}(t)$, aggiornato ogni ciclo da $F_t$ misurato), invece di essere una costante fissa o zero.
+2. **Termine di bilanciamento ($\beta$):** invariato — penalizza differenza di forza tra i due bracci.
+3. **Termine di coppia ($\gamma_L,\gamma_R$):** ora ha davvero un ruolo, perché il vincolo non è più sempre attivo esattamente dove punta anche il termine $\alpha$: il QP ha un margine reale ($SM_{target}$) dentro cui $\gamma$ può spostare la soluzione per scaricare il braccio più stressato.
+
+### Perché "squeeze maggiore dei bound" e non uguale
+
+Il punto centrale della riformulazione: **il target di costo deve stare strettamente oltre il bound, mai esattamente su di esso.** Se il target coincidesse col bound (come accadeva quando puntava a $x_u$ direttamente, o a $0$ con bound sempre attivo), l'ottimizzatore non avrebbe mai un vero grado di libertà: la soluzione sarebbe sempre "sul muro", e qualunque peso ($\gamma$ in particolare) diventerebbe decorativo, esattamente come nel problema originale. Tenendo il target a distanza $SM_{target}>0$ dal bound, si crea uno spazio di manovra reale dentro cui i pesi $\beta, \gamma$ possono effettivamente competere e produrre soluzioni diverse.
+
+---
+
+## Passo 4 — Problema QP in forma canonica
+
+Variabili: $x = [x_L, x_R]^T$
+
+**Hessiana (2×2), invariata nella struttura rispetto alla versione precedente:**
+$$
+H = 2\begin{bmatrix} \alpha c_L^2 + \beta & \alpha c_Lc_R - \beta \\ \alpha c_Lc_R - \beta & \alpha c_R^2 + \beta \end{bmatrix} + H_\tau
+$$
+dove $H_\tau$ è il contributo dei termini $\gamma_L\|\tau_L\|^2, \gamma_R\|\tau_R\|^2$ (invariato, dipende solo da $J_L^TS_{n,L}$, $J_R^TS_{n,R}$).
+
+**Gradiente (2×1):**
+$$
+g = 2\alpha\big(\lambda_0 - x_u^{ref}(t) + SM_{target}\big)\, c + g_\tau
+$$
+dove $c = [c_L, c_R]^T$ e $g_\tau$ è invariato rispetto alla versione precedente.
+
+**Vincoli box, ora time-varying:**
+$$
+x_l \le x \le x_u(t), \qquad x_u(t) = \big[x_u^L(t),\, x_u^R(t)\big]^T
+$$
+
+---
+
+## Passo 5 — Procedura di calcolo, ordine delle operazioni ad ogni ciclo di controllo
+
+1. **Leggi le forze tangenziali misurate** $F_{t,L}, F_{t,R}$ dai sensori F/T (nessuna derivata, nessuna stima di velocità/accelerazione).
+2. **Calcola i bound rigidi** $x_u^L(t), x_u^R(t)$ dal Passo 1.
+3. **Calcola il riferimento scalare** $x_u^{ref}(t)$ (min o media dei due bound, Passo 2).
+4. **Costruisci il termine di offset** $\lambda_0 - x_u^{ref}(t) + SM_{target}$ e aggiornalo nel gradiente $g$.
+5. **Costruisci $H, g$** completi (squeeze + bilanciamento + coppia, invariati nella struttura).
+6. **Risolvi il QP** con i bound $x_u(t)$ appena calcolati.
+7. **Ricostruisci il wrench totale** di output come nella versione precedente.
+
+**Nota sull'ordine:** i bound (passo 2) devono essere calcolati **prima** della costruzione del gradiente (passo 4-5), perché il gradiente dipende da $x_u^{ref}(t)$. Nella pipeline originale l'ordine era invertito (QP costruito prima dei bound); va corretto.
+
+---
+
+## Punti da verificare prima del deploy (checklist)
+
+- [ ] **Segno di $SM_{target}$** nell'offset — verificare con un caso numerico concreto che il target finale sia effettivamente *più* compressivo del bound, non meno.
+- [ ] **Scelta min vs media** per $x_u^{ref}(t)$ — la versione min è più conservativa e coerente con un vincolo di sicurezza per-braccio; documentarla esplicitamente nel paper come scelta di design.
+- [ ] **Taratura di $SM_{target}$** — deve essere abbastanza piccolo da non sprecare inutilmente coppia, abbastanza grande da lasciare un margine di manovra reale a $\beta, \gamma$. Va giustificato con un test di sensibilità, non lasciato come numero arbitrario.
+- [ ] **$\delta$ (margine sul modello d'attrito) e $SM_{target}$ (margine di costo) sono due cose distinte** — non vanno sommati o confusi: $\delta$ sta nel vincolo rigido (sicurezza assoluta), $SM_{target}$ sta nel costo (obiettivo morbido).
+
+Perché
+
+𝐻
+H viene dalla parte quadratica della funzione di costo, cioè dai termini che moltiplicano 
+𝑥
+𝐿
+2
+,
+𝑥
+𝑅
+2
+,
+𝑥
+𝐿
+𝑥
+𝑅
+x
+L
+2
+	​
+
+,x
+R
+2
+	​
+
+,x
+L
+	​
+
+x
+R
+	​
+
+. Guarda l'espansione di 
+(
+𝐴
+−
+𝑥
+𝑟
+𝑒
+𝑓
+)
+2
+(A−x
+ref
+	​
+
+)
+2
+:
+
+(
+𝐴
+−
+𝑥
+𝑟
+𝑒
+𝑓
+)
+2
+=
+𝐴
+2
+−
+2
+𝐴
+ 
+𝑥
+𝑟
+𝑒
+𝑓
++
+𝑥
+𝑟
+𝑒
+𝑓
+2
+(A−x
+ref
+	​
+
+)
+2
+=A
+2
+−2Ax
+ref
+	​
+
++x
+ref
+2
+	​
+
+𝐴
+2
+=
+(
+𝑐
+𝐿
+𝑥
+𝐿
++
+𝑐
+𝑅
+𝑥
+𝑅
++
+𝜆
+0
+)
+2
+A
+2
+=(c
+L
+	​
+
+x
+L
+	​
+
++c
+R
+	​
+
+x
+R
+	​
+
++λ
+0
+	​
+
+)
+2
+ → contiene i termini quadratici in 
+𝑥
+𝐿
+,
+𝑥
+𝑅
+x
+L
+	​
+
+,x
+R
+	​
+
+ → questi vanno in 
+𝐻
+H
+−
+2
+𝐴
+ 
+𝑥
+𝑟
+𝑒
+𝑓
+−2Ax
+ref
+	​
+
+ → è lineare in 
+𝑥
+𝐿
+,
+𝑥
+𝑅
+x
+L
+	​
+
+,x
+R
+	​
+
+ (perché 
+𝐴
+A è lineare) → questo va in 
+𝑔
+g
+𝑥
+𝑟
+𝑒
+𝑓
+2
+x
+ref
+2
+	​
+
+ → non dipende affatto da 
+𝑥
+𝐿
+,
+𝑥
+𝑅
+x
+L
+	​
+
+,x
+R
+	​
+
+ → è solo una costante additiva, non compare né in 
+𝐻
+H né in 
+𝑔
+g (uno scalare che sposta il valore della funzione di costo ma non la sua forma, il minimizzatore non lo vede)
+
+Quindi 
+𝑥
+𝑢
+𝑟
+𝑒
+𝑓
+(
+𝑡
+)
+x
+u
+ref
+	​
+
+(t) e 
+𝑆
+𝑀
+𝑡
+𝑎
+𝑟
+𝑔
+𝑒
+𝑡
+SM
+target
+	​
+
+, essendo entrambi dentro 
+𝑥
+𝑟
+𝑒
+𝑓
+x
+ref
+	​
+
+, compaiono solo nel termine 
+−
+2
+𝐴
+ 
+𝑥
+𝑟
+𝑒
+𝑓
+−2Ax
+ref
+	​
+
+ — che è lineare — e quindi finiscono solo dentro 
+𝑔
+g, esattamente come ti avevo scritto:
+
+
+𝑔
+=
+2
+𝛼
+(
+𝜆
+0
+−
+𝑥
+𝑢
+𝑟
+𝑒
+𝑓
+(
+𝑡
+)
++
+𝑆
+𝑀
+𝑡
+𝑎
+𝑟
+𝑔
+𝑒
+𝑡
+)
+ 
+𝑐
++
+𝑔
+𝜏
+g=2α(λ
+0
+	​
+
+−x
+u
+ref
+	​
+
+(t)+SM
+target
+	​
+
+)c+g
+τ
+	​
+
+
+𝐻
+H dipende solo da 
+𝑐
+𝐿
+,
+𝑐
+𝑅
+c
+L
+	​
+
+,c
+R
+	​
+
+ (proiezione geometrica, invariata), 
+𝛼
+α, 
+𝛽
+β, e dai termini di coppia (
+𝛾
+𝐿
+,
+𝛾
+𝑅
+γ
+L
+	​
+
+,γ
+R
+	​
+
+ via 
+𝐻
+𝜏
+H
+τ
+	​
+
+) — nessuno di questi cambia nel tempo per via del margine dinamico. È il meccanismo giusto per un QP: il target che si sposta cambia dove punta l'ottimo (attraverso il termine lineare 
+𝑔
+g), non la forma/curvatura della funzione di costo attorno a quel punto (
+𝐻
+H).
