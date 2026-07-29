@@ -385,5 +385,17 @@ double beta(double spring, double initial_value, double final_value);
 
 
 
+
+
+
+// membri della classe da aggiungere:
+bool contactDetected_ = false;
+double settleTimer_ = 0.0;
+double prevFL_ = 0.0, prevFR_ = 0.0;
+double forceRateThreshold_ = 5.0; double settleDuration_ = 3.0;
+
+
+
+
 Eigen::MatrixXd computeJacobian(unsigned int robotIndex, const std::string & eeName) const;
 };

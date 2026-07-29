@@ -181,30 +181,58 @@ void DualArmControl::stateCollaborative(){
 
               const double contactThreshold = 1.7;
 
-              double delta_z = spd(5) * timeStep;
+              
 
-              forBothImpedanceTasks([&](auto &task) {
-              // Otteniamo la posa target attuale
-              sva::PTransformd targetPose = task->targetPose();
-              // Creiamo una trasformazione di sola traslazione lungo l'asse Z locale
-              sva::PTransformd localShift(Eigen::Vector3d(0.0, 0.0, delta_z));
-              // Moltiplicando a sinistra (nella convenzione SpaceVecAlg), 
-              // applichiamo lo spostamento nel frame locale dell'end-effector
-              task->targetPose(localShift * targetPose);
-              });
+
 
               sva::ForceVecd FL = leftImpedanceTask_->measuredWrench();
               sva::ForceVecd FR = rightImpedanceTask_->measuredWrench();
 
-              if(FL.force().norm() > contactThreshold && FR.force().norm() > contactThreshold){
-                     mc_rtc::log::success("[FSM] Contact established.");
-                     mc_rtc::log::info("FL = {:.2f}, FR = {:.2f}",FL.force().norm(),FR.force().norm());
-                     // Blocca la posa attuale dei due end-effector                     
-                     leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
-                     rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
-                     stateTimer_ = 0;
-                     collabSubState_ = CollabSubState::TRAJECTORY;
+
+              double normFL = FL.force().norm();
+              double normFR = FR.force().norm();
+              bool inContact = (normFL > contactThreshold && normFR > contactThreshold);
+
+              if(!contactDetected_){
+                     // fase di avvicinamento: continua a spingere come prima
+                     double delta_z = spd(5) * timeStep;
+                     forBothImpedanceTasks([&](auto &task) {
+                            sva::PTransformd targetPose = task->targetPose();
+                            sva::PTransformd localShift(Eigen::Vector3d(0.0, 0.0, delta_z));
+                            task->targetPose(localShift * targetPose);
+                     });
+                     if(inContact){
+                            contactDetected_ = true;
+                            settleTimer_ = 0.0;
+                            prevFL_ = normFL;
+                            prevFR_ = normFR;
+                            mc_rtc::log::info("[FSM] Contatto rilevato, attendo assestamento...");
+                     }
+
               }
+              else{
+                     double dFL = std::abs(normFL - prevFL_) / timeStep;
+                     double dFR = std::abs(normFR - prevFR_) / timeStep;
+                     prevFL_ = normFL;
+                     prevFR_ = normFR;
+                     bool stable = (dFL < forceRateThreshold_) && (dFR < forceRateThreshold_);
+                     if(inContact && stable){
+                            settleTimer_ += timeStep;
+                     }
+                     else{
+                     settleTimer_ = 0.0;
+                     if(!inContact) contactDetected_ = false; // ha perso il contatto: torna a spingere
+                     }
+                     if(settleTimer_ > settleDuration_){
+                            mc_rtc::log::success("[FSM] Contact established and settled.");
+                            leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
+                            rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
+                            stateTimer_ = 0;
+                            contactDetected_ = false;
+                            collabSubState_ = CollabSubState::TRAJECTORY;
+                     }
+              }
+
               break;
               }
               case CollabSubState::TRAJECTORY:{   
